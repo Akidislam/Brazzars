@@ -1,4 +1,8 @@
 import { ArrowDown, ArrowRight, ArrowUpRight, Menu, Search, ShoppingBag, Sparkles } from 'lucide-react';
+import { Link, useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext.jsx';
+
+const accountPaths = { customer: '/account', vendor: '/vendor/dashboard', admin: '/admin/dashboard' };
 
 const categories = [
   { name: 'Home & living', count: '124 shops', tone: 'bg-[#e6eadf]', image: 'photo-1600210492486-724fe5c67fb0' },
@@ -7,15 +11,18 @@ const categories = [
 ];
 
 function Header() {
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+
   return <header className="flex items-center justify-between border-b border-black/5 px-5 py-5 sm:px-10 lg:px-16">
-    <a href="#top" className="font-display text-[25px] font-extrabold tracking-[-1.5px]">brazzars<span className="text-forest">.</span></a>
+    <Link to="/" className="font-display text-[25px] font-extrabold tracking-[-1.5px]">brazzars<span className="text-forest">.</span></Link>
     <nav className="hidden items-center gap-9 text-[13px] font-medium text-ink/70 md:flex">
       <a className="hover:text-forest" href="#discover">Discover</a><a className="hover:text-forest" href="#categories">Categories</a><a className="hover:text-forest" href="#community">For sellers</a>
     </nav>
     <div className="flex items-center gap-2 sm:gap-4">
       <button aria-label="Search" className="rounded-full p-2 hover:bg-black/5"><Search size={19} strokeWidth={1.7} /></button>
       <button aria-label="Shopping bag" className="relative rounded-full p-2 hover:bg-black/5"><ShoppingBag size={19} strokeWidth={1.7} /><span className="absolute right-0 top-0 h-2 w-2 rounded-full bg-[#b7db63]" /></button>
-      <a href="#discover" className="hidden rounded-full bg-ink px-5 py-2.5 text-xs font-semibold text-white transition hover:bg-forest sm:inline-flex">Explore shops</a>
+      {user ? <div className="flex items-center gap-2"><Link to={accountPaths[user.role] ?? '/'} className="rounded-full px-3 py-2 text-xs font-semibold">My account</Link><button type="button" onClick={() => { logout(); navigate('/'); }} className="hidden rounded-full bg-ink px-4 py-2.5 text-xs font-semibold text-white hover:bg-forest sm:inline-flex">Log out</button></div> : <div className="flex items-center gap-1 sm:gap-3"><Link to="/login" className="rounded-full px-2 py-2 text-xs font-semibold sm:px-3">Sign in</Link><Link to="/register" className="rounded-full bg-ink px-3 py-2.5 text-[11px] font-semibold text-white transition hover:bg-forest sm:px-5 sm:text-xs">Join Brazzars</Link></div>}
       <button aria-label="Open menu" className="rounded-full p-2 md:hidden"><Menu size={20} /></button>
     </div>
   </header>;

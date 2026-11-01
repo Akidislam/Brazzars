@@ -32,9 +32,9 @@ The planned business rules include a fixed 10% vendor commission, product review
 
 | Area | Implemented now | Planned |
 | --- | --- | --- |
-| Customer experience | Responsive landing page; customer registration, login, and current-user API | Cart, checkout, and order tracking |
-| Vendor experience | Vendor registration creates a pending Shop; shared authentication | Shop/product management and order fulfillment tools |
-| Admin experience | User role values include `admin`; reusable role authorization middleware | Admin interface, vendor suspension, and product review/moderation APIs; no public admin registration |
+| Customer experience | Responsive landing page; customer registration and login UI; protected account placeholder; current-user API | Cart, checkout, and order tracking |
+| Vendor experience | Vendor registration UI creates a pending Shop; shared login; protected seller dashboard placeholder | Shop/product management and order fulfillment tools |
+| Admin experience | Protected admin dashboard placeholder; user role values include `admin`; reusable role authorization middleware | Vendor suspension and product review/moderation APIs; no public admin registration |
 | API | Health endpoints and authentication endpoints listed below | Marketplace, shop, product, cart, checkout, and order APIs |
 | Database | Mongoose connection support and User, Shop, Category, Product models | Cart, Order, VendorOrder, Payment, Review, Address, Commission, Payout, and Notification models |
 | Payments and delivery | No payment or delivery integration | Cash on Delivery, an online gateway selected later, and platform-managed or vendor-managed delivery |
@@ -63,7 +63,11 @@ Brazzars is structured as a modular monolith with separate `client/` and `server
 
 ## Frontend
 
-The frontend currently has one React Router application. Both `/` and the fallback route render the landing page. The Axios client is configured with `VITE_API_BASE_URL` when provided and otherwise uses the local API base URL in its source configuration. No customer, vendor, or admin route guards have been implemented.
+The frontend is one React Router application. It includes customer registration and shared login pages, vendor shop registration, and protected customer, vendor, and admin dashboard placeholders. `AuthContext` restores sessions through `/api/auth/me`; route guards use the backend-returned role. The Axios client attaches the access token and clears an expired session after an authenticated 401 response. The base URL uses `VITE_API_BASE_URL` when provided and otherwise uses the local API base URL in its source configuration.
+
+Authentication pages are available at `/login`, `/register`, `/vendor/login`, and `/vendor/register`. Protected placeholders are `/account`, `/vendor/dashboard`, and `/admin/dashboard`. These dashboard pages are starting points and do not provide marketplace management features.
+
+The frontend keeps the access token in `sessionStorage`, so the session ends with the browser tab. JavaScript running on the page can access this storage; this is a known security tradeoff. The frontend does not treat a stored role as authoritative and validates an existing token through the backend.
 
 Current frontend source tree:
 
@@ -81,17 +85,28 @@ client/
     ├── main.jsx
     ├── styles.css
     ├── assets/          (empty placeholder)
-    ├── components/      (empty placeholder)
-    ├── context/         (empty placeholder)
+    ├── components/
+    │   └── auth/        (shared form fields and notices)
+    ├── context/
+    │   └── AuthContext.jsx
     ├── features/        (empty placeholder)
     ├── hooks/           (empty placeholder)
-    ├── layouts/         (empty placeholder)
+    ├── layouts/
+    │   └── AuthLayout.jsx
     ├── pages/
-    │   └── HomePage.jsx
-    ├── routes/          (empty placeholder)
+    │   ├── DashboardPage.jsx
+    │   ├── HomePage.jsx
+    │   ├── LoginPage.jsx
+    │   └── RegisterPage.jsx
+    ├── routes/
+    │   └── ProtectedRoute.jsx
     └── services/
-        └── api.js
+        ├── api.js
+        ├── authErrors.js
+        └── authStorage.js
 ```
+
+The frontend auth flow is covered by Vitest and React Testing Library tests in `src/__tests__/`.
 
 ## Backend
 
@@ -320,7 +335,7 @@ Before staging, review `git status` and confirm no environment files or credenti
 
 ## Roadmap and future improvements
 
-1. Add authenticated customer, vendor, and admin frontend route groups and interfaces.
+1. Build out customer, vendor, and admin experiences beyond the current protected placeholders.
 2. Add admin workflows for vendor approval/suspension and product moderation.
 3. Add product/category discovery, cart, checkout, parent orders, and per-vendor orders.
 4. Implement Cash on Delivery, select and integrate an online payment provider, and define payment state handling.
