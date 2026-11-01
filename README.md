@@ -1,8 +1,8 @@
 # Brazzars
 
-Brazzars is a Bangladesh-focused, multi-vendor marketplace project. Its intended marketplace brings customers, independent vendors, and administrators into one web application. The current codebase is an early foundation: it contains a customer-facing landing page, an Express API health check, an opt-in MongoDB connection, and four initial Mongoose models.
+Brazzars is a Bangladesh-focused, multi-vendor marketplace project. Its intended marketplace brings customers, independent vendors, and administrators into one web application. The current codebase includes a customer-facing landing page, an Express API with health and authentication endpoints, an opt-in MongoDB connection, and four initial Mongoose models.
 
-> **Project status:** Marketplace transactions, authentication, vendor tools, and admin workflows are planned. They are not implemented in the current application.
+> **Project status:** Customer and vendor registration, login, JWT authentication, and the current-user endpoint are implemented. Marketplace transactions, vendor management tools, and admin workflows remain planned.
 
 ## Table of contents
 
@@ -32,10 +32,10 @@ The planned business rules include a fixed 10% vendor commission, product review
 
 | Area | Implemented now | Planned |
 | --- | --- | --- |
-| Customer experience | Responsive landing page and category/marketplace entry sections | Customer account, sign-in, cart, checkout, and order tracking |
-| Vendor experience | User, Shop, and Product data models | Vendor registration, shop management, product management, and order fulfillment tools |
-| Admin experience | User role values include `admin` | Admin interface, vendor suspension, and product review/moderation tools |
-| API | `GET /api/health` and `GET /api/health/db` | Marketplace, account, shop, product, cart, checkout, and order APIs |
+| Customer experience | Responsive landing page; customer registration, login, and current-user API | Cart, checkout, and order tracking |
+| Vendor experience | Vendor registration creates a pending Shop; shared authentication | Shop/product management and order fulfillment tools |
+| Admin experience | User role values include `admin`; reusable role authorization middleware | Admin interface, vendor suspension, and product review/moderation APIs; no public admin registration |
+| API | Health endpoints and authentication endpoints listed below | Marketplace, shop, product, cart, checkout, and order APIs |
 | Database | Mongoose connection support and User, Shop, Category, Product models | Cart, Order, VendorOrder, Payment, Review, Address, Commission, Payout, and Notification models |
 | Payments and delivery | No payment or delivery integration | Cash on Delivery, an online gateway selected later, and platform-managed or vendor-managed delivery |
 
@@ -52,13 +52,14 @@ The role values and data models provide a foundation; they do not imply that cor
 | Database access | MongoDB Atlas, Mongoose 8 |
 | Configuration | dotenv |
 | Cross-origin requests | CORS |
-| Password field handling | Node.js built-in scrypt hash in the User model save hook |
+| Password field handling | Node.js built-in scrypt hash in the User model save hook and scrypt password verification |
+| Access tokens | `jsonwebtoken` with HS256 signature and one-hour expiration |
 
-JWT-based authentication and bcrypt are part of the product plan, but authentication is not implemented. The current User schema hashes document-save passwords with scrypt; there are no login or registration APIs.
+The existing scrypt password format is retained for both hashing and verification. Passwords are not rehashed with bcrypt. JWT-based login and registration are implemented; refresh tokens and logout/revocation are not.
 
 ## Architecture
 
-Brazzars is structured as a modular monolith with separate `client/` and `server/` applications in one repository. The React app is intended to host customer, vendor, and admin interfaces as the product grows. The Express server provides the API boundary and uses Mongoose for data access. MongoDB connection is controlled by environment configuration; the server waits for a successful connection when the opt-in flag is enabled.
+Brazzars is structured as a modular monolith with separate `client/` and `server/` applications in one repository. The React app is intended to host customer, vendor, and admin interfaces as the product grows. The Express server provides the API boundary and uses Mongoose for data access. MongoDB connection is controlled by environment configuration; the server waits for a successful connection when the opt-in flag is enabled. Authentication is implemented as an Express route module, service layer, JWT middleware, and role authorization middleware.
 
 ## Frontend
 
@@ -110,8 +111,11 @@ server/
     │   ├── database.js
     │   └── env.js
     ├── controllers/
+    │   ├── authController.js
     │   └── healthController.js
     ├── middleware/
+    │   ├── authenticate.js
+    │   ├── authorizeRoles.js
     │   └── errorHandler.js
     ├── models/
     │   ├── Category.js
@@ -119,9 +123,17 @@ server/
     │   ├── Shop.js
     │   └── User.js
     ├── routes/
+    │   ├── authRoutes.js
     │   └── healthRoutes.js
-    ├── services/        (empty placeholder)
-    ├── utils/           (empty placeholder)
+    ├── services/
+    │   ├── authService.js
+    │   ├── passwordService.js
+    │   └── tokenService.js
+    ├── test/
+    │   └── auth.test.js
+    ├── utils/
+    │   ├── httpError.js
+    │   └── safeUser.js
     └── validators/      (empty placeholder)
 ```
 
@@ -150,7 +162,7 @@ The following describe confirmed product decisions, not working application flow
 
 ### Roles and permissions
 
-The User schema accepts `customer`, `vendor`, and `admin` role values. Account registration, authentication, authorization middleware, and role-protected routes are not implemented. The planned experience assigns customers to shopping, vendors to shop/product/order management, and admins to marketplace moderation.
+The User schema accepts `customer`, `vendor`, and `admin` role values. Registration only creates customers or vendors; there is no public admin registration endpoint. The authentication middleware verifies a signed bearer token, reloads the user, rejects missing or inactive users, and attaches a safe profile. Authorization middleware checks the role loaded from MongoDB rather than a client-supplied role. No vendor/admin business routes are protected yet because those routes do not exist. The planned experience assigns customers to shopping, vendors to shop/product/order management, and admins to marketplace moderation.
 
 ### Product approval
 
@@ -170,14 +182,27 @@ Cash on Delivery is the planned initial payment method, with an online gateway t
 
 ## API
 
-Only these API endpoints are currently implemented:
+These API endpoints are currently implemented:
 
 | Method | Path | Behavior |
 | --- | --- | --- |
 | `GET` | `/api/health` | Returns HTTP 200 JSON indicating the API is running. |
 | `GET` | `/api/health/db` | Returns HTTP 200 when Mongoose is connected, otherwise HTTP 503 with the current connection state. |
+| `POST` | `/api/auth/register` | Creates a customer account only and returns a safe user profile plus a JWT. A supplied role is not used. |
+| `POST` | `/api/auth/register/vendor` | Creates a vendor account and pending shop; uses a database transaction when available and cleanup fallback when transactions are unsupported. |
+| `POST` | `/api/auth/login` | Verifies email and password and returns a safe profile plus a JWT; invalid credentials use a generic response. |
+| `GET` | `/api/auth/me` | Requires a bearer JWT and returns the current user's safe profile. |
 
-Other paths return a JSON 404 response. No authentication or marketplace endpoints are available yet.
+JWTs are signed with HS256 and expire after one hour. The current middleware supports CUSTOMER, VENDOR, and ADMIN role checks, but there are no role-restricted marketplace endpoints yet. Other paths return a JSON 404 response.
+
+### Authentication requests
+
+- `POST /api/auth/register` accepts `name`, `email`, and `password`; `phone` is optional. It always creates a customer. Any `role` in the request is ignored, and there is no public admin registration.
+- `POST /api/auth/register/vendor` accepts the same user fields plus a `shop` object with required `shopName` and `slug`. Shop description, contact email, and contact phone are optional. The new shop starts in `pending` status.
+- `POST /api/auth/login` accepts `email` and `password`. Invalid credentials and inactive users receive the same generic rejection.
+- `GET /api/auth/me` requires `Authorization: Bearer <token>`. The token is verified, then the current active user and role are loaded from MongoDB.
+
+Successful registration and login responses include a safe user profile and an access token. The password and password hash are never included. Admin accounts must be provisioned through a controlled administrative process; public registration cannot assign the admin role.
 
 ## Environment configuration
 
@@ -190,8 +215,9 @@ The example files define these variable names:
 | `CLIENT_ORIGIN` | Backend | CORS origin; source configuration defaults to the Vite development origin when unset. |
 | `MONGODB_URI` | Backend | MongoDB connection string. Provide your own Atlas URI privately. |
 | `CONNECT_TO_DATABASE` | Backend | Enables the startup database connection only when set to `true`. |
+| `JWT_SECRET` | Backend | Private signing secret for access tokens; configure a random value of at least 32 characters. |
 
-To configure a local machine, copy `client/.env.example` to `client/.env` and `server/.env.example` to `server/.env`, then edit the local files as needed. Replace the MongoDB URI placeholder with your own Atlas connection string and opt in to the database connection by setting `CONNECT_TO_DATABASE` to `true`. Keep all `.env` files private; do not paste credentials into source files or commit them. The checked-in example files contain placeholders, not working credentials.
+To configure a local machine, copy `client/.env.example` to `client/.env` and `server/.env.example` to `server/.env` when creating fresh local files. If `server/.env` already exists, preserve its private values and add or update only the settings you need. Replace the MongoDB URI placeholder with your own Atlas connection string, opt in to the database connection by setting `CONNECT_TO_DATABASE` to `true`, and set `JWT_SECRET` to a locally generated random secret. Keep all `.env` files private; do not paste credentials into source files or commit them. The checked-in example files contain placeholders, not working credentials.
 
 ## Local development
 
@@ -245,6 +271,16 @@ npm run dev
 
 For a non-watch start, run `npm run start:server` from the root or `npm start` from `server/`. With database connection disabled, the API starts without Atlas. With `CONNECT_TO_DATABASE=true`, it waits for the configured MongoDB connection before listening.
 
+### Run backend tests
+
+From `server/`, run:
+
+```bash
+npm test
+```
+
+The Node.js built-in test suite uses in-memory model stubs and does not create customer/vendor accounts in MongoDB Atlas.
+
 ### Health checks
 
 After starting the backend, visit:
@@ -259,8 +295,10 @@ The database health endpoint returns HTTP 503 while Mongoose is disconnected; th
 - Keep `.env` and `.env.*` local; `.gitignore` excludes them while allowing `.env.example` files to be committed.
 - Never put Atlas credentials, passwords, access tokens, or private keys in README files, source code, screenshots, or commits.
 - The database connection error handling avoids logging the MongoDB URI.
-- The User model hashes passwords on document saves and excludes the password field from normal queries. Authentication and password verification endpoints are not implemented.
-- Do not expose admin controls or rely on client-side role checks as authorization; server-side authorization must be implemented before protected operations are added.
+- The User model hashes passwords on document saves and excludes the password field from normal queries. Authentication verifies passwords using the existing scrypt format.
+- JWT signing uses the private `JWT_SECRET`; the secret is never included in tokens or API responses. Bearer tokens expire after one hour.
+- Login rejects invalid credentials with a generic message. Inactive accounts and invalid/missing tokens are rejected.
+- Do not expose admin controls or rely on client-side role checks as authorization. Apply `authenticate` and `authorizeRoles` to future protected server routes.
 
 ## Git workflow
 
@@ -282,16 +320,15 @@ Before staging, review `git status` and confirm no environment files or credenti
 
 ## Roadmap and future improvements
 
-1. Add server-side request validation and structured logging.
-2. Implement registration and login, password verification, JWT handling, and role-based authorization.
-3. Add admin workflows for vendor approval/suspension and product moderation.
-4. Build customer, vendor, and admin route groups and interfaces.
-5. Add product/category discovery, cart, checkout, parent orders, and per-vendor orders.
-6. Implement Cash on Delivery, select and integrate an online payment provider, and define payment state handling.
-7. Add platform/vendor delivery assignment and order status tracking.
-8. Add commission records and manual payout review.
-9. Add reviews, notifications, and operational reporting.
-10. Add automated tests, deployment configuration, monitoring, and backups.
+1. Add authenticated customer, vendor, and admin frontend route groups and interfaces.
+2. Add admin workflows for vendor approval/suspension and product moderation.
+3. Add product/category discovery, cart, checkout, parent orders, and per-vendor orders.
+4. Implement Cash on Delivery, select and integrate an online payment provider, and define payment state handling.
+5. Add platform/vendor delivery assignment and order status tracking.
+6. Add commission records and manual payout review.
+7. Add reviews, notifications, and operational reporting.
+8. Add refresh/revocation strategy, rate limiting, and deployment-specific security controls.
+9. Expand automated tests, deployment configuration, monitoring, and backups.
 
 These are future steps; they are not claims about current functionality.
 
