@@ -1,0 +1,11 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { font-family: 'DM Sans', sans-serif; color: #20251f; background: #f8f8f5; font-synthesis: none; text-rendering: optimizeLegibility; }
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; min-width: 320px; }
+button, input { font: inherit; }
+::selection { color: #20251f; background: #c8ed75; }
+.hero-pattern { background-image: radial-gradient(rgba(255,255,255,.22) 1px, transparent 1px); background-size: 15px 15px; }
