@@ -193,10 +193,10 @@ describe('protected routes and roles', () => {
     expect(screen.queryByRole('heading', { name: 'Admin workspace' })).toBeNull();
   });
 
-  it('allows a backend-verified admin session into the admin placeholder', async () => {
+  it('allows a backend-verified admin session into the Admin dashboard', async () => {
     window.sessionStorage.setItem('brazzars_access_token', 'admin-session-token');
     api.get.mockResolvedValueOnce({ data: { success: true, data: { user: admin } } });
     renderApp('/admin/dashboard');
-    expect(await screen.findByRole('heading', { name: 'Admin workspace' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Dashboard overview' })).toBeTruthy();
   });
 });

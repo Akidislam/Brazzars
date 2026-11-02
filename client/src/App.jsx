@@ -13,6 +13,9 @@ import CheckoutPage from './pages/CheckoutPage.jsx';
 import OrderPages from './pages/OrderPages.jsx';
 import VendorOrdersPage from './pages/VendorOrdersPage.jsx';
 import AdminOrdersPage from './pages/AdminOrdersPage.jsx';
+import AdminLoginPage from './pages/AdminLoginPage.jsx';
+import AdminChangePasswordPage from './pages/AdminChangePasswordPage.jsx';
+import AdminDashboardPage from './pages/AdminDashboardPage.jsx';
 import ProtectedRoute, { GuestOnlyRoute } from './routes/ProtectedRoute.jsx';
 
 export default function App() {
@@ -24,6 +27,7 @@ export default function App() {
       <Route path="/shops/:slug" element={<ShopPage />} />
       <Route path="/search" element={<SearchPage />} />
       <Route path="/products/:slug" element={<ProductPage />} />
+      <Route path="/admin/login" element={<AdminLoginPage />} />
       <Route path="/cart" element={<CartPage />} />
       <Route element={<ProtectedRoute allowedRoles={['customer']} />}>
         <Route path="/checkout" element={<CheckoutPage />} />
@@ -45,8 +49,11 @@ export default function App() {
         <Route path="/vendor/orders" element={<VendorOrdersPage />} />
         <Route path="/vendor/orders/:id" element={<VendorOrdersPage mode="detail" />} />
       </Route>
-      <Route element={<ProtectedRoute allowedRoles={['admin']} />}>
-        <Route path="/admin/dashboard" element={<DashboardPage role="admin" />} />
+      <Route element={<ProtectedRoute allowedRoles={['admin']} allowPasswordChange />}>
+        <Route path="/admin/change-password" element={<AdminChangePasswordPage />} />
+      </Route>
+      <Route element={<ProtectedRoute allowedRoles={['admin']} loginPath="/admin/login" />}>
+        <Route path="/admin/dashboard" element={<AdminDashboardPage />} />
         <Route path="/admin/orders" element={<AdminOrdersPage />} />
         <Route path="/admin/orders/:id" element={<AdminOrdersPage mode="detail" />} />
       </Route>

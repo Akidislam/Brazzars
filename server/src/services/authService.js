@@ -204,3 +204,24 @@ export async function login(body) {
 
   return createAuthResult(user);
 }
+
+const PASSWORD_POLICY = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).{12,128}$/;
+
+export async function changeAdminPassword(userId, body) {
+  const currentPassword = typeof body?.currentPassword === 'string' ? body.currentPassword : '';
+  const newPassword = typeof body?.newPassword === 'string' ? body.newPassword : '';
+  if (!currentPassword || !newPassword) throw new HttpError(400, 'Current and new passwords are required.');
+  if (!PASSWORD_POLICY.test(newPassword)) {
+    throw new HttpError(400, 'New password must be 12–128 characters and include uppercase, lowercase, number, and symbol characters.');
+  }
+  if (currentPassword === newPassword) throw new HttpError(400, 'Choose a new password different from your current password.');
+
+  const user = await User.findById(userId).select('+password');
+  if (!user || !user.isActive || user.role !== 'admin') throw new HttpError(403, 'Admin access is required.');
+  if (!(await verifyPassword(currentPassword, user.password))) throw new HttpError(401, 'Current password is incorrect.');
+
+  user.password = newPassword;
+  user.mustChangePassword = false;
+  await user.save();
+  return toSafeUser(user);
+}

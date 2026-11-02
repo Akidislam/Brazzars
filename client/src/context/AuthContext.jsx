@@ -63,6 +63,13 @@ export function AuthProvider({ children }) {
   }, []);
 
   const login = useCallback((credentials) => establishSession(api.post('/auth/login', credentials)), [establishSession]);
+  const changePassword = useCallback(async (details) => {
+    const response = await api.post('/auth/change-password', details);
+    const updatedUser = response?.data?.data?.user;
+    if (!updatedUser) throw new Error('Brazzars returned an unexpected password-change response.');
+    setUser(updatedUser);
+    return updatedUser;
+  }, []);
   const registerCustomer = useCallback((details) => establishSession(api.post('/auth/register', details)), [establishSession]);
   const registerVendor = useCallback((details) => establishSession(api.post('/auth/register/vendor', details)), [establishSession]);
 
@@ -72,6 +79,7 @@ export function AuthProvider({ children }) {
     isLoading: status === 'loading',
     isAuthenticated: status === 'authenticated' && Boolean(user),
     login,
+    changePassword,
     registerCustomer,
     registerVendor,
     logout: clearSession,

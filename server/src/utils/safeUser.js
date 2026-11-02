@@ -1,4 +1,4 @@
-export const SAFE_USER_FIELDS = 'name email phone role isActive createdAt updatedAt';
+export const SAFE_USER_FIELDS = 'name email phone role isActive mustChangePassword createdAt updatedAt';
 
 export function toSafeUser(user) {
   if (!user) return null;
@@ -9,6 +9,7 @@ export function toSafeUser(user) {
     email: user.email,
     role: user.role,
     isActive: user.isActive,
+    mustChangePassword: user.mustChangePassword === true,
   };
 
   for (const field of ['phone', 'createdAt', 'updatedAt']) {

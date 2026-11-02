@@ -1,4 +1,4 @@
-import { login, registerCustomer, registerVendor } from '../services/authService.js';
+import { changeAdminPassword, login, registerCustomer, registerVendor } from '../services/authService.js';
 import { toSafeUser } from '../utils/safeUser.js';
 
 export async function registerCustomerController(req, res, next) {
@@ -30,4 +30,13 @@ export async function loginController(req, res, next) {
 
 export function currentUserController(req, res) {
   return res.status(200).json({ success: true, data: { user: toSafeUser(req.user) } });
+}
+
+export async function changeAdminPasswordController(req, res, next) {
+  try {
+    const user = await changeAdminPassword(req.user.id, req.body);
+    return res.status(200).json({ success: true, data: { user } });
+  } catch (error) {
+    return next(error);
+  }
 }

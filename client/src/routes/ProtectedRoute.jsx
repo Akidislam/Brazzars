@@ -18,13 +18,16 @@ export function GuestOnlyRoute({ children }) {
   return children ?? <Outlet />;
 }
 
-export default function ProtectedRoute({ allowedRoles, loginPath = '/login', children }) {
+export default function ProtectedRoute({ allowedRoles, loginPath = '/login', allowPasswordChange = false, children }) {
   const { user, isLoading } = useAuth();
   const location = useLocation();
 
   if (isLoading) return <AuthLoading />;
   if (!user) return <Navigate to={loginPath} state={{ from: location }} replace />;
   if (!allowedRoles.includes(user.role)) return <Navigate to={roleHomePaths[user.role] ?? '/'} replace />;
+  if (user.role === 'admin' && user.mustChangePassword && !allowPasswordChange) {
+    return <Navigate to="/admin/change-password" replace />;
+  }
 
   return children ?? <Outlet />;
 }

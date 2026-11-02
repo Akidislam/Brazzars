@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { ArrowLeft, ClipboardList, PackageCheck, RefreshCw, Search, ShieldCheck, Store } from 'lucide-react';
-import CustomerLayout from '../components/marketplace/CustomerLayout.jsx';
+import AdminLayout from '../layouts/AdminLayout.jsx';
 import api from '../services/api.js';
 
 const STATUSES = ['PENDING', 'CONFIRMED', 'PROCESSING', 'SHIPPED', 'DELIVERED', 'CANCELLED'];
@@ -90,7 +90,7 @@ export default function AdminOrdersPage({ mode = 'list' }) {
 
   function submitSearch(event) { event.preventDefault(); setFilters((current) => ({ ...current, search: searchInput.trim(), page: 1 })); }
 
-  return <CustomerLayout><main className="listing-page admin-orders-page">
+  return <AdminLayout><main className="listing-page admin-orders-page">
     {mode === 'detail' ? <>
       <Link className="back-link" to="/admin/orders"><ArrowLeft size={16} /> Back to all orders</Link>
       <div className="listing-heading"><p className="market-eyebrow">ADMIN ORDER REVIEW</p><h1>Order details</h1><p>Review the complete parent order and its vendor fulfillment records.</p></div>
@@ -117,5 +117,5 @@ export default function AdminOrdersPage({ mode = 'list' }) {
         {!loading && pagination.pages > 1 && <div className="vendor-pagination"><span>Page {pagination.page} of {pagination.pages}</span><div><button type="button" disabled={pagination.page <= 1} onClick={() => setFilters((current) => ({ ...current, page: current.page - 1 }))}>Previous</button><button type="button" disabled={pagination.page >= pagination.pages} onClick={() => setFilters((current) => ({ ...current, page: current.page + 1 }))}>Next</button></div></div>}
       </section>
     </>}
-  </main></CustomerLayout>;
+  </main></AdminLayout>;
 }

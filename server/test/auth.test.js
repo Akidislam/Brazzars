@@ -9,6 +9,7 @@ import Shop from '../src/models/Shop.js';
 import { env } from '../src/config/env.js';
 import { authenticate } from '../src/middleware/authenticate.js';
 import { authorizeRoles } from '../src/middleware/authorizeRoles.js';
+import { provisionInitialAdmin } from '../src/services/adminProvisioningService.js';
 
 const state = { users: [], shops: [], transactionAvailable: true, failShopSave: false };
 let originalJwtSecret;
@@ -52,14 +53,16 @@ beforeEach((context) => {
   context.mock.method(User.prototype, 'save', async function saveInMemory() {
     await this.validate();
     await runSaveHooks(this);
-    const duplicate = state.users.some((user) => user.email === this.email);
+    const duplicate = this.isNew && state.users.some((user) => user.email === this.email);
     if (duplicate) {
       const error = new Error('Duplicate key');
       error.code = 11000;
       throw error;
     }
     this.isNew = false;
-    state.users.push(this);
+    const existingIndex = state.users.findIndex((user) => String(user._id) === String(this._id));
+    if (existingIndex >= 0) state.users[existingIndex] = this;
+    else state.users.push(this);
     return this;
   });
   context.mock.method(Shop.prototype, 'save', async function saveShopInMemory() {
@@ -228,6 +231,95 @@ test('incorrect password and inactive account use generic login rejection', asyn
     });
     assert.equal(inactive.response.status, 401);
     assert.equal(inactive.body.message, incorrect.body.message);
+  });
+});
+
+test('one-time Admin provisioning creates an admin with a scrypt hash and forced password change', async () => {
+  const result = await provisionInitialAdmin();
+  assert.equal(result.email, 'admin@gmail.com');
+  assert.equal(state.users.length, 1);
+  assert.equal(state.users[0].role, 'admin');
+  assert.equal(state.users[0].mustChangePassword, true);
+  assert.match(state.users[0].password, /^scrypt\$16384\$8\$1\$/);
+  assert.equal(state.users[0].password.includes('admin1234'), false);
+});
+
+test('Admin provisioning refuses any existing account at the initial email without overwriting it', async () => {
+  const existing = new User({ name: 'Existing account', email: 'admin@gmail.com', password: 'existing-password', role: 'customer' });
+  existing.isNew = false;
+  state.users.push(existing);
+  await assert.rejects(provisionInitialAdmin(), { code: 'ADMIN_EMAIL_EXISTS' });
+  assert.equal(state.users.length, 1);
+  assert.equal(state.users[0].role, 'customer');
+});
+
+test('re-running one-time Admin provisioning cannot duplicate or reset the Admin', async () => {
+  await provisionInitialAdmin();
+  const originalHash = state.users[0].password;
+  await assert.rejects(provisionInitialAdmin(), { code: 'ADMIN_EMAIL_EXISTS' });
+  assert.equal(state.users.length, 1);
+  assert.equal(state.users[0].password, originalHash);
+});
+
+test('Admin provisioning refuses an existing Vendor email without promoting the account', async () => {
+  const existing = new User({ name: 'Existing vendor', email: 'admin@gmail.com', password: 'vendor-password', role: 'vendor' });
+  existing.isNew = false;
+  state.users.push(existing);
+  await assert.rejects(provisionInitialAdmin(), { code: 'ADMIN_EMAIL_EXISTS' });
+  assert.equal(state.users.length, 1);
+  assert.equal(state.users[0].role, 'vendor');
+});
+
+test('provisioned Admin can authenticate and is required to change initial password', async (context) => {
+  await provisionInitialAdmin();
+  await withServer(context, async (baseUrl) => {
+    const { response, body } = await post(baseUrl, '/api/auth/login', { email: 'ADMIN@gmail.com', password: 'admin1234' });
+    assert.equal(response.status, 200);
+    assert.equal(body.data.user.role, 'admin');
+    assert.equal(body.data.user.mustChangePassword, true);
+    assert.equal(JSON.stringify(body).includes('admin1234'), false);
+    const incorrect = await post(baseUrl, '/api/auth/login', { email: 'admin@gmail.com', password: 'incorrect-admin-password' });
+    assert.equal(incorrect.response.status, 401);
+    assert.equal(incorrect.body.message, 'Invalid email or password.');
+    const blocked = await fetch(`${baseUrl}/api/admin/orders/statistics`, { headers: { authorization: `Bearer ${body.data.token}` } });
+    assert.equal(blocked.status, 403);
+  });
+});
+
+test('Customer and Vendor accounts are denied from the Admin APIs', async (context) => {
+  await withServer(context, async (baseUrl) => {
+    for (const role of ['customer', 'vendor']) {
+      const user = new User({ name: `${role} account`, email: `${role}@example.com`, password: 'account-password', role });
+      await user.save();
+      const loginResult = await post(baseUrl, '/api/auth/login', { email: user.email, password: 'account-password' });
+      assert.equal(loginResult.response.status, 200);
+      const response = await fetch(`${baseUrl}/api/admin/orders/statistics`, { headers: { authorization: `Bearer ${loginResult.body.data.token}` } });
+      assert.equal(response.status, 403);
+    }
+  });
+});
+
+test('Admin password change checks current password, strength, and allows a new login', async (context) => {
+  await provisionInitialAdmin();
+  await withServer(context, async (baseUrl) => {
+    const loginResult = await post(baseUrl, '/api/auth/login', { email: 'admin@gmail.com', password: 'admin1234' });
+    const token = loginResult.body.data.token;
+    const change = (body) => fetch(`${baseUrl}/api/auth/change-password`, {
+      method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify(body),
+    });
+    const incorrect = await change({ currentPassword: 'wrong-initial', newPassword: 'ValidAdmin2026!Secure' });
+    assert.equal(incorrect.status, 401);
+    const weak = await change({ currentPassword: 'admin1234', newPassword: 'weakpassword' });
+    assert.equal(weak.status, 400);
+    const changed = await change({ currentPassword: 'admin1234', newPassword: 'ValidAdmin2026!Secure' });
+    assert.equal(changed.status, 200);
+    assert.equal((await changed.json()).data.user.mustChangePassword, false);
+    let authorizationError;
+    await new Promise((resolve) => authorizeRoles('admin')({ user: state.users[0] }, {}, (error) => { authorizationError = error; resolve(); }));
+    assert.equal(authorizationError, undefined);
+    const subsequent = await post(baseUrl, '/api/auth/login', { email: 'admin@gmail.com', password: 'ValidAdmin2026!Secure' });
+    assert.equal(subsequent.response.status, 200);
+    assert.equal(subsequent.body.data.user.mustChangePassword, false);
   });
 });
 
