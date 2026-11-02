@@ -1,14 +1,15 @@
 import { Link, useLocation } from 'react-router-dom';
-import { ArrowRight, ClipboardList, ShieldCheck, Store, Tags } from 'lucide-react';
+import { ArrowRight, ClipboardList, PackageCheck, ShieldCheck, Store, Tags } from 'lucide-react';
 import AdminLayout from '../layouts/AdminLayout.jsx';
 
-const upcoming = ['Product Approval', 'Customer Management', 'Vendor Payouts', 'Settings'];
+const upcoming = ['Customer Management', 'Vendor Payouts', 'Settings'];
 
 export default function AdminDashboardPage() {
   const location = useLocation();
   const available = [
     { title: 'Order Management', description: 'Review customer orders, vendor fulfillment, and marketplace order status.', to: '/admin/orders', action: 'Open order management', Icon: ClipboardList },
     { title: 'Category Management', description: 'Create and maintain the categories customers use to discover products.', to: '/admin/categories', action: 'Manage categories', Icon: Tags },
+    { title: 'Product Management', description: 'Review product submissions and manage marketplace product visibility.', to: '/admin/products', action: 'Manage products', Icon: PackageCheck },
     { title: 'Vendor Management', description: 'Review vendor applications and manage approved shop visibility.', to: '/admin/vendors', action: 'Manage vendors', Icon: Store },
   ];
   return <AdminLayout><main className="admin-dashboard-page">

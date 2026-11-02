@@ -4,11 +4,14 @@ import {
   deleteVendorProduct,
   getPublicProductBySlug,
   getPublicProductById,
+  getAdminProduct,
+  listAdminProducts,
   getVendorProduct,
   listPendingProducts,
   listPublicProducts,
   listVendorProducts,
   rejectProduct,
+  setAdminProductActive,
   updateVendorProduct,
 } from '../services/productService.js';
 
@@ -39,6 +42,21 @@ export async function deleteVendorProductController(req, res, next) {
 
 export async function listPendingProductsController(req, res, next) {
   try { return res.status(200).json({ success: true, data: await listPendingProducts(req.query) }); }
+  catch (error) { return next(error); }
+}
+
+export async function listAdminProductsController(req, res, next) {
+  try { return res.status(200).json({ success: true, data: await listAdminProducts(req.query) }); }
+  catch (error) { return next(error); }
+}
+
+export async function getAdminProductController(req, res, next) {
+  try { return res.status(200).json({ success: true, data: { product: await getAdminProduct(req.params.id) } }); }
+  catch (error) { return next(error); }
+}
+
+export async function setAdminProductStatusController(req, res, next) {
+  try { return res.status(200).json({ success: true, data: { product: await setAdminProductActive(req.params.id, req.body?.isActive) } }); }
   catch (error) { return next(error); }
 }
 

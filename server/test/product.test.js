@@ -39,6 +39,7 @@ function query(valueFactory) {
 
 function matches(record, filter) {
   return Object.entries(filter).every(([key, expected]) => {
+    if (key === '$or') return expected.some((condition) => matches(record, condition));
     const actual = record[key];
     if (expected && typeof expected === 'object' && '$ne' in expected) return String(actual?._id ?? actual) !== String(expected.$ne);
     if (expected && typeof expected === 'object' && '$in' in expected) return expected.$in.some((value) => String(actual?._id ?? actual) === String(value?._id ?? value));
@@ -89,6 +90,7 @@ function mockDatabase(context) {
   state.products = [];
 
   context.mock.method(User, 'findById', (id) => query(() => state.users.find((user) => String(user._id) === String(id)) ?? null));
+  context.mock.method(User, 'find', (filter) => query(() => state.users.filter((user) => matches(user, filter))));
   context.mock.method(Shop, 'findOne', (filter) => Promise.resolve(state.shops.find((shop) => matches(shop, filter)) ?? null));
   context.mock.method(Shop, 'find', (filter) => query(() => state.shops.filter((shop) => matches(shop, filter))));
   context.mock.method(Category, 'findOne', (filter) => Promise.resolve(state.categories.find((category) => matches(category, filter)) ?? null));
@@ -305,6 +307,52 @@ test('admin can approve and reject pending products; non-admin cannot review', a
     assert.equal(rejected.response.status, 200);
     assert.equal(toReject.status, 'rejected');
     assert.equal(toReject.rejectionReason, 'Image needs improvement.');
+  });
+});
+
+test('Admin product management lists, searches, filters, and retrieves products', async (context) => {
+  const product = makeProduct({ name: 'Admin search backpack', slug: 'admin-search-backpack' });
+  state.products.push(product);
+  await withServer(context, async (baseUrl) => {
+    const all = await request(baseUrl, '/api/admin/products?page=1&limit=10', { role: 'admin' });
+    assert.equal(all.response.status, 200);
+    assert.equal(all.body.data.products.length, 1);
+    assert.equal(all.body.data.statistics.totalProducts, 1);
+    const filtered = await request(baseUrl, `/api/admin/products?status=pending&category=${ids.category}&search=backpack`, { role: 'admin' });
+    assert.equal(filtered.response.status, 200);
+    assert.equal(filtered.body.data.products[0].id, product._id.toString());
+    const vendorSearch = await request(baseUrl, '/api/admin/products?search=Vendor%20One', { role: 'admin' });
+    const shopSearch = await request(baseUrl, '/api/admin/products?search=Vendor%20Shop', { role: 'admin' });
+    assert.equal(vendorSearch.body.data.products.length, 1);
+    assert.equal(shopSearch.body.data.products.length, 1);
+    const detail = await request(baseUrl, `/api/admin/products/${product._id}`, { role: 'admin' });
+    assert.equal(detail.response.status, 200);
+    assert.equal(detail.body.data.product.name, product.name);
+    const denied = await request(baseUrl, '/api/admin/products', { role: 'customer' });
+    assert.equal(denied.response.status, 403);
+    const vendorDenied = await request(baseUrl, '/api/admin/products', { role: 'vendor' });
+    assert.equal(vendorDenied.response.status, 403);
+  });
+});
+
+test('Admin rejection requires a reason and availability can only change for approved products', async (context) => {
+  const pending = makeProduct({ name: 'Pending review item', slug: 'pending-review-item' });
+  const approved = makeProduct({ name: 'Approved review item', slug: 'approved-review-item', status: 'approved' });
+  state.products.push(pending, approved);
+  await withServer(context, async (baseUrl) => {
+    const reasonMissing = await request(baseUrl, `/api/admin/products/${pending._id}/reject`, { method: 'PATCH', role: 'admin', body: {} });
+    assert.equal(reasonMissing.response.status, 400);
+    const rejected = await request(baseUrl, `/api/admin/products/${pending._id}/reject`, { method: 'PATCH', role: 'admin', body: { reason: 'Images are unclear.' } });
+    assert.equal(rejected.response.status, 200);
+    assert.equal(pending.status, 'rejected');
+    const disabled = await request(baseUrl, `/api/admin/products/${approved._id}/status`, { method: 'PATCH', role: 'admin', body: { isActive: false } });
+    assert.equal(disabled.response.status, 200);
+    assert.equal(approved.isActive, false);
+    const reactivated = await request(baseUrl, `/api/admin/products/${approved._id}/status`, { method: 'PATCH', role: 'admin', body: { isActive: true } });
+    assert.equal(reactivated.response.status, 200);
+    assert.equal(approved.isActive, true);
+    const forbidden = await request(baseUrl, `/api/admin/products/${pending._id}/status`, { method: 'PATCH', role: 'admin', body: { isActive: false } });
+    assert.equal(forbidden.response.status, 409);
   });
 });
 

@@ -6,7 +6,7 @@ import { useAuth } from '../context/AuthContext.jsx';
 const navigation = [
   { label: 'Dashboard Overview', to: '/admin/dashboard', icon: LayoutDashboard, ready: true },
   { label: 'Order Management', to: '/admin/orders', icon: PackageCheck, ready: true },
-  { label: 'Product Approval', icon: Boxes },
+  { label: 'Product Management', to: '/admin/products', icon: Boxes, ready: true },
   { label: 'Vendor Management', to: '/admin/vendors', icon: Store, ready: true },
   { label: 'Customer Management', icon: Users },
   { label: 'Categories', to: '/admin/categories', icon: Tags, ready: true },

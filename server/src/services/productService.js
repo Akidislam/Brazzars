@@ -2,6 +2,7 @@ import mongoose from 'mongoose';
 import Category from '../models/Category.js';
 import Product from '../models/Product.js';
 import Shop from '../models/Shop.js';
+import User from '../models/User.js';
 import { HttpError } from '../utils/httpError.js';
 import {
   escapeSearch,
@@ -209,6 +210,91 @@ export async function listPendingProducts(query) {
   return { products: products.map(productView), pagination: paginationView(page, limit, total) };
 }
 
+function parseAdminProductQuery(query) {
+  if (!query || typeof query !== 'object' || Array.isArray(query)) throw new HttpError(400, 'Product filters are invalid.');
+  const allowed = new Set(['page', 'limit', 'search', 'status', 'active', 'category', 'sort']);
+  if (Object.keys(query).some((key) => !allowed.has(key))) throw new HttpError(400, 'An unsupported product filter was provided.');
+  const { page, limit } = parsePagination(query, { defaultLimit: 10, maxLimit: 100 });
+  const search = escapeSearch(query.search);
+  const status = query.status && query.status !== 'all' ? query.status : undefined;
+  if (status && !['pending', 'approved', 'rejected', 'disabled'].includes(status)) throw new HttpError(400, 'Product status filter is invalid.');
+  let active;
+  if (query.active !== undefined) {
+    if (query.active === 'true') active = true;
+    else if (query.active === 'false') active = false;
+    else throw new HttpError(400, 'Active filter must be true or false.');
+  }
+  const category = query.category && query.category !== 'all' ? query.category : undefined;
+  if (category && !isObjectIdString(category)) throw new HttpError(400, 'Category filter is invalid.');
+  const sort = query.sort ?? 'newest';
+  if (!['newest', 'oldest'].includes(sort)) throw new HttpError(400, 'Sort must be newest or oldest.');
+  return { page, limit, search, status, active, category, sort };
+}
+
+async function adminProductStatistics() {
+  const [totalProducts, pendingApproval, approvedProducts, rejectedProducts, activeProducts, inactiveProducts] = await Promise.all([
+    Product.countDocuments({}),
+    Product.countDocuments({ status: 'pending' }),
+    Product.countDocuments({ status: 'approved' }),
+    Product.countDocuments({ status: 'rejected' }),
+    Product.countDocuments({ isActive: { $ne: false } }),
+    Product.countDocuments({ isActive: false }),
+  ]);
+  return { totalProducts, pendingApproval, approvedProducts, rejectedProducts, activeProducts, inactiveProducts };
+}
+
+export async function listAdminProducts(query) {
+  const filters = parseAdminProductQuery(query);
+  const filter = {};
+  if (filters.status) filter.status = filters.status;
+  if (filters.active === true) filter.isActive = { $ne: false };
+  if (filters.active === false) filter.isActive = false;
+  if (filters.category) filter.category = filters.category;
+  if (filters.search) {
+    const expression = { $regex: filters.search, $options: 'i' };
+    const [vendors, shops] = await Promise.all([
+      User.find({ role: 'vendor', name: expression }).select('_id').lean(),
+      Shop.find({ shopName: expression }).select('_id').lean(),
+    ]);
+    filter.$or = [
+      { name: expression },
+      { vendor: { $in: vendors.map((vendor) => vendor._id) } },
+      { shop: { $in: shops.map((shop) => shop._id) } },
+    ];
+  }
+  const direction = filters.sort === 'oldest' ? 1 : -1;
+  const [items, total, statistics] = await Promise.all([
+    Product.find(filter).populate('vendor', 'name email').populate('shop', SHOP_FIELDS).populate('category', CATEGORY_FIELDS)
+      .sort({ createdAt: direction, _id: direction }).skip((filters.page - 1) * filters.limit).limit(filters.limit),
+    Product.countDocuments(filter),
+    adminProductStatistics(),
+  ]);
+  return {
+    products: items.map(productView),
+    pagination: { page: filters.page, limit: filters.limit, total, pages: Math.ceil(total / filters.limit) },
+    statistics,
+  };
+}
+
+export async function getAdminProduct(productId) {
+  validateObjectId(productId);
+  const product = await Product.findOne({ _id: productId }).populate('vendor', 'name email phone')
+    .populate('shop', 'shopName slug logo status isActive').populate('category', 'name slug image isActive');
+  if (!product) throw new HttpError(404, 'Product not found.');
+  return productView(product);
+}
+
+export async function setAdminProductActive(productId, isActive) {
+  validateObjectId(productId);
+  if (typeof isActive !== 'boolean') throw new HttpError(400, 'isActive must be true or false.');
+  const product = await Product.findOne({ _id: productId });
+  if (!product || product.deletedAt) throw new HttpError(404, 'Product not found.');
+  if (product.status !== 'approved') throw new HttpError(409, 'Only approved products can be activated or deactivated.');
+  product.isActive = isActive;
+  try { await product.save(); } catch (error) { validationError(error); }
+  return productView(product);
+}
+
 async function reviewProduct(adminId, productId, status, reason = null) {
   validateObjectId(productId);
   const product = await Product.findOne({ _id: productId, status: 'pending', isActive: { $ne: false }, deletedAt: null });
@@ -238,13 +324,10 @@ export async function rejectProduct(adminId, productId, body) {
   if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some((key) => key !== 'reason')) {
     throw new HttpError(400, 'Only an optional rejection reason is allowed.');
   }
-  let reason = null;
-  if (input.reason !== undefined) {
-    if (typeof input.reason !== 'string' || input.reason.trim().length > 500) {
-      throw new HttpError(400, 'Rejection reason must be 500 characters or fewer.');
-    }
-    reason = input.reason.trim() || null;
+  if (typeof input.reason !== 'string' || input.reason.trim().length < 5 || input.reason.trim().length > 500) {
+    throw new HttpError(400, 'A rejection reason between 5 and 500 characters is required.');
   }
+  const reason = input.reason.trim();
   return reviewProduct(adminId, productId, 'rejected', reason);
 }
 
