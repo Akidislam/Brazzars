@@ -29,16 +29,27 @@ let originalJwtSecret;
 
 function same(left, right) { return String(left?._id ?? left) === String(right?._id ?? right); }
 
+function fieldValue(record, path) {
+  return path.split('.').reduce((value, part) => Array.isArray(value)
+    ? value.map((entry) => entry?.[part])
+    : value?.[part], record);
+}
+
 function matches(record, filter) {
   if (filter.$or && !filter.$or.some((condition) => matches(record, condition))) return false;
   return Object.entries(filter).every(([key, expected]) => {
     if (key === '$or') return true;
-    const actual = record[key];
-    if (expected && typeof expected === 'object' && '$regex' in expected) return new RegExp(expected.$regex, expected.$options).test(actual ?? '');
+    const actual = fieldValue(record, key);
+    if (expected && typeof expected === 'object' && '$regex' in expected) {
+      const regex = new RegExp(expected.$regex, expected.$options);
+      return Array.isArray(actual) ? actual.flat(Infinity).some((value) => regex.test(value ?? '')) : regex.test(actual ?? '');
+    }
     if (expected === null) return actual == null;
     if (expected && typeof expected === 'object' && '$in' in expected) return expected.$in.some((value) => same(actual, value));
     if (expected && typeof expected === 'object' && '$ne' in expected) return !same(actual, expected.$ne);
-    if (expected && typeof expected === 'object' && '$gte' in expected) return Number(actual) >= expected.$gte;
+    if (expected && typeof expected === 'object' && '$gte' in expected && new Date(actual) < expected.$gte) return false;
+    if (expected && typeof expected === 'object' && '$lte' in expected && new Date(actual) > expected.$lte) return false;
+    if (expected && typeof expected === 'object' && ('$gte' in expected || '$lte' in expected)) return actual != null;
     return same(actual, expected);
   });
 }
@@ -116,19 +127,20 @@ function mockDatabase(context) {
     for (const input of documents) {
       const document = new ParentOrder(input);
       await document.validate();
-      state.parentOrders.push(document.toObject());
+      state.parentOrders.push({ ...document.toObject(), createdAt: new Date(), updatedAt: new Date() });
       saved.push(document);
     }
     return saved;
   });
   context.mock.method(ParentOrder, 'countDocuments', async (filter) => state.parentOrders.filter((order) => matches(order, filter)).length);
+  context.mock.method(ParentOrder, 'aggregate', async () => [{ totalOrderValue: state.parentOrders.reduce((sum, order) => sum + order.total, 0) }]);
   context.mock.method(ParentOrder, 'find', (filter) => memoryQuery((options) => sortAndPage(state.parentOrders.filter((order) => matches(order, filter)), options)));
   context.mock.method(VendorOrder, 'create', async (documents) => {
     const saved = [];
     for (const input of documents) {
       const document = new VendorOrder(input);
       await document.validate();
-      state.vendorOrders.push(document.toObject());
+      state.vendorOrders.push({ ...document.toObject(), createdAt: new Date(), updatedAt: new Date() });
       saved.push(document);
     }
     return saved;
@@ -407,5 +419,83 @@ test('a vendor may cancel an unconfirmed order, and cancellation becomes termina
     assert.equal(state.parentOrders[0].status, 'CANCELLED');
     const terminal = await request(baseUrl, `/api/vendor/orders/${vendorOrder._id}/status`, { method: 'PATCH', userId: ids.vendorOne, body: { status: 'CONFIRMED' } });
     assert.equal(terminal.response.status, 409);
+  });
+});
+
+test('admin order APIs require the admin role and return marketplace statistics and paginated global orders', async (context) => {
+  await withServer(context, async (baseUrl) => {
+    await request(baseUrl, '/api/orders', { method: 'POST', userId: ids.customer, body: requestBody, idempotencyKey: IDEMPOTENCY_KEY });
+    const stats = await request(baseUrl, '/api/admin/orders/statistics', { userId: ids.admin });
+    assert.equal(stats.response.status, 200);
+    assert.equal(stats.body.data.statistics.ALL, 1);
+    assert.equal(stats.body.data.statistics.PENDING, 1);
+    assert.equal(stats.body.data.statistics.totalOrderValue, 250);
+
+    const listing = await request(baseUrl, '/api/admin/orders?page=1&limit=1&status=PENDING&sort=oldest&from=2020-01-01&to=2035-01-01', { userId: ids.admin });
+    assert.equal(listing.response.status, 200);
+    assert.equal(listing.body.data.pagination.total, 1);
+    assert.equal(listing.body.data.orders[0].orderNumber, state.parentOrders[0].orderNumber);
+    assert.deepEqual(listing.body.data.orders[0].vendorOrders.map((entry) => entry.vendor.name).sort(), ['Vendor One', 'Vendor Two']);
+
+    for (const userId of [ids.customer, ids.vendorOne]) {
+      const denied = await request(baseUrl, '/api/admin/orders', { userId });
+      assert.equal(denied.response.status, 403);
+    }
+    const anonymous = await request(baseUrl, '/api/admin/orders', { auth: false });
+    assert.equal(anonymous.response.status, 401);
+  });
+});
+
+test('admin search finds orders by customer, vendor, shop, or order reference and validates filters', async (context) => {
+  await withServer(context, async (baseUrl) => {
+    await request(baseUrl, '/api/orders', { method: 'POST', userId: ids.customer, body: requestBody, idempotencyKey: IDEMPOTENCY_KEY });
+    for (const search of ['Nila', 'Vendor One', 'Jute House', state.parentOrders[0].orderNumber]) {
+      const result = await request(baseUrl, `/api/admin/orders?search=${encodeURIComponent(search)}`, { userId: ids.admin });
+      assert.equal(result.response.status, 200, `search ${search}`);
+      assert.equal(result.body.data.pagination.total, 1, `search ${search}`);
+    }
+    assert.equal((await request(baseUrl, '/api/admin/orders?from=2035-03-01&to=2035-02-01', { userId: ids.admin })).response.status, 400);
+    assert.equal((await request(baseUrl, '/api/admin/orders?status=PAID', { userId: ids.admin })).response.status, 400);
+  });
+});
+
+test('admin order details include customer, all vendor snapshots, financial snapshots, delivery, and history', async (context) => {
+  await withServer(context, async (baseUrl) => {
+    await request(baseUrl, '/api/orders', { method: 'POST', userId: ids.customer, body: requestBody, idempotencyKey: IDEMPOTENCY_KEY });
+    const orderId = state.parentOrders[0]._id.toString();
+    const details = await request(baseUrl, `/api/admin/orders/${orderId}`, { userId: ids.admin });
+    assert.equal(details.response.status, 200);
+    assert.equal(details.body.data.order.customer.name, 'Nila Rahman');
+    assert.equal(details.body.data.order.deliveryAddress.district, 'Dhaka');
+    assert.equal(details.body.data.order.vendorOrders.length, 2);
+    assert.equal(details.body.data.order.vendorOrders[0].items[0].commissionRate, 0.1);
+    assert.ok(details.body.data.order.statusHistory.length > 0);
+    assert.equal(Object.hasOwn(details.body.data.order, 'requestHash'), false);
+  });
+});
+
+test('admin status changes follow workflow, record admin actor, and aggregate parent status transactionally', async (context) => {
+  await withServer(context, async (baseUrl) => {
+    await request(baseUrl, '/api/orders', { method: 'POST', userId: ids.customer, body: requestBody, idempotencyKey: IDEMPOTENCY_KEY });
+    const firstVendorOrder = state.vendorOrders[0];
+    const invalid = await request(baseUrl, `/api/admin/orders/vendor-orders/${firstVendorOrder._id}/status`, { method: 'PATCH', userId: ids.admin, body: { status: 'SHIPPED' } });
+    assert.equal(invalid.response.status, 409);
+    assert.equal(firstVendorOrder.status, 'PENDING');
+
+    const updated = await request(baseUrl, `/api/admin/orders/vendor-orders/${firstVendorOrder._id}/status`, { method: 'PATCH', userId: ids.admin, body: { status: 'CONFIRMED' } });
+    assert.equal(updated.response.status, 200);
+    const updatedVendorOrder = state.vendorOrders.find((entry) => same(entry._id, firstVendorOrder._id));
+    assert.equal(updatedVendorOrder.status, 'CONFIRMED', JSON.stringify(updated.body));
+    const adminHistory = updatedVendorOrder.statusHistory.find((entry) => entry.status === 'CONFIRMED');
+    assert.equal(String(adminHistory.actor), ids.admin.toString());
+    assert.equal(adminHistory.actorRole, 'admin');
+    assert.equal(state.parentOrders[0].status, 'PENDING');
+
+    await request(baseUrl, `/api/admin/orders/vendor-orders/${state.vendorOrders[1]._id}/status`, { method: 'PATCH', userId: ids.admin, body: { status: 'CONFIRMED' } });
+    assert.equal(state.parentOrders[0].status, 'CONFIRMED');
+    const deniedVendor = await request(baseUrl, `/api/admin/orders/vendor-orders/${firstVendorOrder._id}/status`, { method: 'PATCH', userId: ids.vendorOne, body: { status: 'PROCESSING' } });
+    const deniedCustomer = await request(baseUrl, `/api/admin/orders/vendor-orders/${firstVendorOrder._id}/status`, { method: 'PATCH', userId: ids.customer, body: { status: 'PROCESSING' } });
+    assert.equal(deniedVendor.response.status, 403);
+    assert.equal(deniedCustomer.response.status, 403);
   });
 });

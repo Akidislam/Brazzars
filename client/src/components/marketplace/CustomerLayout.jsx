@@ -24,6 +24,7 @@ export default function CustomerLayout({ children }) {
     <NavLink to="/" end onClick={() => setMenuOpen(false)}>Home</NavLink>
     <Link to="/#categories" onClick={() => setMenuOpen(false)}>Categories</Link>
     <NavLink to="/shops" onClick={() => setMenuOpen(false)}>All shops</NavLink>
+    {user?.role === 'admin' && <NavLink to="/admin/orders" onClick={() => setMenuOpen(false)}>Admin orders</NavLink>}
   </>;
 
   return <div className="marketplace-shell">

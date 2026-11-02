@@ -109,3 +109,33 @@ export function validateVendorOrderStatus(body) {
   }
   return body.status;
 }
+
+export function parseAdminOrderQuery(query) {
+  if (Object.keys(query).some((key) => !['page', 'limit', 'status', 'search', 'sort', 'from', 'to'].includes(key))) {
+    throw new HttpError(400, 'An unsupported query parameter was provided.');
+  }
+  const { page, limit } = parseOrderPagination({ page: query.page, limit: query.limit });
+  let status;
+  if (query.status !== undefined && query.status !== 'ALL') {
+    if (!VENDOR_ORDER_STATUSES.includes(query.status)) throw new HttpError(400, 'Order status filter is invalid.');
+    status = query.status;
+  }
+  let search;
+  if (query.search !== undefined) {
+    if (typeof query.search !== 'string' || query.search.trim().length > 100) throw new HttpError(400, 'Order search must be 100 characters or fewer.');
+    search = query.search.trim();
+  }
+  const sort = query.sort ?? 'newest';
+  if (!['newest', 'oldest'].includes(sort)) throw new HttpError(400, 'Order sort is invalid.');
+  const parseDate = (value, field, endOfDay = false) => {
+    if (value === undefined || value === '') return undefined;
+    if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new HttpError(400, `${field} must use YYYY-MM-DD format.`);
+    const result = new Date(`${value}T${endOfDay ? '23:59:59.999' : '00:00:00.000'}Z`);
+    if (Number.isNaN(result.getTime()) || result.toISOString().slice(0, 10) !== value) throw new HttpError(400, `${field} is not a valid date.`);
+    return result;
+  };
+  const from = parseDate(query.from, 'Start date');
+  const to = parseDate(query.to, 'End date', true);
+  if (from && to && from > to) throw new HttpError(400, 'Start date must not be after end date.');
+  return { page, limit, status, search, sort, from, to };
+}

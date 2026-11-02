@@ -11,19 +11,11 @@ import {
   parseVendorOrderQuery,
   validateIdempotencyKey,
   validatePlaceOrder,
-  validateVendorOrderStatus,
 } from '../validators/orderValidator.js';
+import { transitionVendorOrderStatus } from './orderStatusService.js';
 
 const COMMISSION_RATE = 0.10;
 const TRANSACTION_REQUIRED_MESSAGE = 'Order placement requires MongoDB transactions, but transactions are unavailable on this database deployment. No order or stock changes were committed.';
-const STATUS_TRANSITIONS = {
-  PENDING: ['CONFIRMED', 'CANCELLED'],
-  CONFIRMED: ['PROCESSING', 'CANCELLED'],
-  PROCESSING: ['SHIPPED'],
-  SHIPPED: ['DELIVERED'],
-  DELIVERED: [],
-  CANCELLED: [],
-};
 
 function roundMoney(value) {
   return Math.round((value + Number.EPSILON) * 100) / 100;
@@ -39,24 +31,6 @@ function escapeRegex(value) { return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
 async function ensureApprovedVendorShop(vendorId) {
   const shop = await Shop.exists({ owner: vendorId, status: 'approved', isActive: { $ne: false } });
   if (!shop) throw new HttpError(403, 'An approved active shop is required to manage vendor orders.');
-}
-
-// Parent status follows the least advanced non-cancelled vendor order. If every
-// child is cancelled, the parent is CANCELLED; cancelled children are ignored
-// when the remaining children continue through fulfillment.
-function aggregateParentStatus(vendorStatuses) {
-  const active = vendorStatuses.filter((status) => status !== 'CANCELLED');
-  if (!active.length) return 'CANCELLED';
-  if (active.every((status) => status === 'DELIVERED')) return 'DELIVERED';
-  const progress = ['PENDING', 'CONFIRMED', 'PROCESSING', 'SHIPPED', 'DELIVERED'];
-  return active.reduce((earliest, status) => progress.indexOf(status) < progress.indexOf(earliest) ? status : earliest, active[0]);
-}
-
-function historyUpdate(order, status, actorId, actorRole) {
-  const event = { status, changedAt: new Date(), actor: actorId, actorRole };
-  if (order.statusHistory?.length) return { $push: { statusHistory: event }, $set: { status } };
-  const priorEvent = { status: order.status, changedAt: order.createdAt ?? new Date(), actor: null, actorRole: 'system' };
-  return { $set: { status, statusHistory: [priorEvent, event] } };
 }
 
 function orderHash(input) {
@@ -369,40 +343,6 @@ export async function getVendorOrder(vendorId, orderId) {
 
 export async function updateVendorOrderStatus(vendorId, actorId, body, orderId) {
   await ensureApprovedVendorShop(vendorId);
-  if (!mongoose.isValidObjectId(orderId)) throw new HttpError(404, 'Order not found.');
-  const nextStatus = validateVendorOrderStatus(body);
-  const session = await mongoose.startSession();
-  try {
-    await session.withTransaction(async () => {
-      const order = await VendorOrder.findOne({ _id: orderId, vendor: vendorId }).session(session).lean();
-      if (!order) throw new HttpError(404, 'Order not found.');
-      if (!STATUS_TRANSITIONS[order.status]?.includes(nextStatus)) {
-        throw new HttpError(409, `Order cannot move from ${order.status} to ${nextStatus}.`);
-      }
-      const updated = await VendorOrder.updateOne(
-        { _id: order._id, vendor: vendorId, status: order.status },
-        historyUpdate(order, nextStatus, actorId, 'vendor'),
-        { session },
-      );
-      if (updated.matchedCount !== 1) throw new HttpError(409, 'Order status changed. Refresh and try again.');
-
-      const parentOrder = await ParentOrder.findById(order.parentOrder).session(session).lean();
-      if (!parentOrder) throw new HttpError(409, 'The parent order could not be found.');
-      const vendorOrders = await VendorOrder.find({ parentOrder: order.parentOrder }).session(session).lean();
-      const parentStatus = aggregateParentStatus(vendorOrders.map((entry) => entry.status));
-      if (parentStatus !== parentOrder.status) {
-        await ParentOrder.updateOne(
-          { _id: parentOrder._id, status: parentOrder.status },
-          historyUpdate(parentOrder, parentStatus, actorId, 'vendor'),
-          { session },
-        );
-      }
-    });
-  } catch (error) {
-    if (transactionUnsupported(error)) {
-      throw new HttpError(503, 'Order status updates require MongoDB transactions, but transactions are unavailable. No status changes were committed.', { expose: true });
-    }
-    throw error;
-  } finally { await session.endSession(); }
+  await transitionVendorOrderStatus({ orderId, vendorId, actorId, actorRole: 'vendor', body });
   return getVendorOrder(vendorId, orderId);
 }

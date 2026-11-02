@@ -37,6 +37,7 @@ export default function DashboardPage({ role }) {
         </div>
         <Link className="dashboard-home-link" to="/">Return to marketplace</Link>
         {role === 'customer' && <Link className="dashboard-home-link" to="/account/orders">My Orders</Link>}
+        {role === 'admin' && <Link className="dashboard-home-link" to="/admin/orders">Manage marketplace orders</Link>}
       </section>
     </main>
   );
