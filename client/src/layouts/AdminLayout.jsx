@@ -7,7 +7,7 @@ const navigation = [
   { label: 'Dashboard Overview', to: '/admin/dashboard', icon: LayoutDashboard, ready: true },
   { label: 'Order Management', to: '/admin/orders', icon: PackageCheck, ready: true },
   { label: 'Product Approval', icon: Boxes },
-  { label: 'Vendor Management', icon: Store },
+  { label: 'Vendor Management', to: '/admin/vendors', icon: Store, ready: true },
   { label: 'Customer Management', icon: Users },
   { label: 'Categories', to: '/admin/categories', icon: Tags, ready: true },
   { label: 'Vendor Payouts', icon: CreditCard },

@@ -49,11 +49,14 @@ const shopSchema = new mongoose.Schema(
     address: { type: addressSchema, default: undefined },
     status: {
       type: String,
-      enum: ['pending', 'approved', 'suspended'],
+      enum: ['pending', 'approved', 'rejected', 'suspended'],
       default: 'pending',
       index: true,
     },
     isActive: { type: Boolean, default: true, index: true },
+    reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    reviewedAt: { type: Date, default: null },
+    rejectionReason: { type: String, trim: true, maxlength: 500, default: null },
   },
   { timestamps: true },
 );
