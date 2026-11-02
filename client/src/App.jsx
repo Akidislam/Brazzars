@@ -8,6 +8,8 @@ import ShopsPage from './pages/ShopsPage.jsx';
 import ShopPage from './pages/ShopPage.jsx';
 import SearchPage from './pages/SearchPage.jsx';
 import ProductPage from './pages/ProductPage.jsx';
+import CartPage from './pages/CartPage.jsx';
+import CheckoutPlaceholderPage from './pages/CheckoutPlaceholderPage.jsx';
 import ProtectedRoute, { GuestOnlyRoute } from './routes/ProtectedRoute.jsx';
 
 export default function App() {
@@ -19,6 +21,8 @@ export default function App() {
       <Route path="/shops/:slug" element={<ShopPage />} />
       <Route path="/search" element={<SearchPage />} />
       <Route path="/products/:slug" element={<ProductPage />} />
+      <Route path="/cart" element={<CartPage />} />
+      <Route path="/checkout" element={<CheckoutPlaceholderPage />} />
       <Route element={<GuestOnlyRoute />}>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/vendor/login" element={<LoginPage accountType="vendor" />} />

@@ -2,11 +2,13 @@ import { useState } from 'react';
 import { Link, NavLink, useNavigate } from 'react-router-dom';
 import { Menu, Search, ShoppingBag, X } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext.jsx';
+import { useCart } from '../../context/CartContext.jsx';
 
 const accountPaths = { customer: '/account', vendor: '/vendor/dashboard', admin: '/admin/dashboard' };
 
 export default function CustomerLayout({ children }) {
   const { user, logout } = useAuth();
+  const { itemCount } = useCart();
   const [menuOpen, setMenuOpen] = useState(false);
   const [search, setSearch] = useState('');
   const navigate = useNavigate();
@@ -42,8 +44,8 @@ export default function CustomerLayout({ children }) {
             <Link className="header-text-button" to="/login">Log in</Link>
             <Link className="header-register" to="/register">Create account</Link>
           </>}
-          <span className="cart-placeholder" aria-label="Cart is not available yet"><ShoppingBag size={21} /><span>Cart</span></span>
         </div>
+        <Link className="cart-nav-link" to="/cart" aria-label={`Cart, ${itemCount} ${itemCount === 1 ? 'item' : 'items'}`}><ShoppingBag size={21} /><span>Cart</span>{itemCount > 0 && <span className="cart-count-badge" aria-hidden="true">{itemCount > 99 ? '99+' : itemCount}</span>}</Link>
         <button className="mobile-menu-toggle" type="button" aria-label={menuOpen ? 'Close navigation' : 'Open navigation'} aria-expanded={menuOpen} onClick={() => setMenuOpen(!menuOpen)}>{menuOpen ? <X size={22} /> : <Menu size={22} />}</button>
       </div>
       <nav className="marketplace-nav" aria-label="Main navigation">{links}</nav>

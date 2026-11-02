@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import api from '../services/api.js';
 import { AuthProvider } from '../context/AuthContext.jsx';
+import { CartProvider } from '../context/CartContext.jsx';
 import App from '../App.jsx';
 
 vi.mock('../services/api.js', () => ({
@@ -17,7 +18,7 @@ const admin = { id: '64f000000000000000000003', name: 'Brazzars Admin', email: '
 function renderApp(path) {
   return render(
     <MemoryRouter initialEntries={[path]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-      <AuthProvider><App /></AuthProvider>
+      <AuthProvider><CartProvider><App /></CartProvider></AuthProvider>
     </MemoryRouter>,
   );
 }

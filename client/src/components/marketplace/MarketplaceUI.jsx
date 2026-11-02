@@ -1,5 +1,7 @@
 import { ArrowRight, ArrowUpRight, Image as ImageIcon, LoaderCircle, SearchX, Store } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
+import { useState } from 'react';
+import { useCart } from '../../context/CartContext.jsx';
 
 export function SectionHeading({ eyebrow, title, to, linkLabel = 'View all' }) {
   return <div className="market-section-heading"><div><p className="market-eyebrow">{eyebrow}</p><h2>{title}</h2></div>{to && <Link className="market-view-link" to={to}>{linkLabel}<ArrowRight size={16} /></Link>}</div>;
@@ -20,9 +22,24 @@ function ProductImage({ images, name }) {
 
 export function ProductCard({ product }) {
   const location = useLocation();
+  const { addProduct, addingSlugs } = useCart();
+  const [cartMessage, setCartMessage] = useState('');
   const shop = product.shop && typeof product.shop === 'object' ? product.shop : null;
   const category = product.category && typeof product.category === 'object' ? product.category : null;
   const price = Number.isFinite(Number(product.price)) ? new Intl.NumberFormat('en-BD', { style: 'currency', currency: 'BDT', maximumFractionDigits: 2 }).format(Number(product.price)) : null;
+  const outOfStock = Number(product.stock) < 1;
+  const adding = addingSlugs.includes(product.slug);
+
+  async function handleAdd() {
+    setCartMessage('');
+    try {
+      await addProduct(product.slug);
+      setCartMessage('Added to cart.');
+    } catch (error) {
+      setCartMessage(error.message);
+    }
+  }
+
   return <article className="product-card">
     <Link to={`/products/${encodeURIComponent(product.slug)}`} state={{ from: `${location.pathname}${location.search}` }} className="product-card-link" aria-label={`View ${product.name}`}>
       <ProductImage images={product.images} name={product.name ?? 'Product'} />
@@ -33,6 +50,9 @@ export function ProductCard({ product }) {
         {shop?.shopName && <p className="product-shop-name"><Store size={13} />{shop.shopName}</p>}
       </div>
     </Link>
+    <div className="product-card-action"><button type="button" className="add-to-cart-button" onClick={handleAdd} disabled={adding || outOfStock}>
+      {outOfStock ? 'Out of stock' : adding ? 'Adding…' : 'Add to cart'}
+    </button>{cartMessage && <span className="cart-action-message" role="status">{cartMessage}</span>}</div>
   </article>;
 }
 

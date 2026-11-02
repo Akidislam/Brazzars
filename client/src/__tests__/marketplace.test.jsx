@@ -4,12 +4,13 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import api from '../services/api.js';
 import { AuthProvider } from '../context/AuthContext.jsx';
+import { CartProvider } from '../context/CartContext.jsx';
 import App from '../App.jsx';
 
 vi.mock('../services/api.js', () => ({ default: { get: vi.fn(), post: vi.fn() } }));
 
 function renderMarketplace(path = '/') {
-  return render(<MemoryRouter initialEntries={[path]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><AuthProvider><App /></AuthProvider></MemoryRouter>);
+  return render(<MemoryRouter initialEntries={[path]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><AuthProvider><CartProvider><App /></CartProvider></AuthProvider></MemoryRouter>);
 }
 
 function response(data) {
