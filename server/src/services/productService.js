@@ -323,3 +323,20 @@ export async function getPublicProductBySlug(slug) {
   delete view.rejectionReason;
   return view;
 }
+
+export async function getPublicProductById(id) {
+  validateObjectId(id, 'Product ID');
+  const publicShopIds = await getPublicShopIds();
+  if (publicShopIds.length === 0) throw new HttpError(404, 'Product not found.');
+  const product = await Product.findOne({
+    _id: id, status: 'approved', isActive: { $ne: false }, deletedAt: null, shop: { $in: publicShopIds },
+  }).select(PUBLIC_PRODUCT_FIELDS).populate('shop', 'shopName slug logo').populate('category', CATEGORY_FIELDS).lean();
+  if (!product) throw new HttpError(404, 'Product not found.');
+  const view = productView(product);
+  delete view.vendor;
+  delete view.deletedAt;
+  delete view.reviewedBy;
+  delete view.reviewedAt;
+  delete view.rejectionReason;
+  return view;
+}

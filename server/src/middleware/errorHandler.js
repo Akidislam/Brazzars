@@ -9,7 +9,7 @@ export function errorHandler(error, _req, res, _next) {
   let statusCode = 500;
   let message = 'Internal server error';
 
-  if (error instanceof HttpError && error.statusCode < 500) {
+  if (error instanceof HttpError && (error.statusCode < 500 || error.expose)) {
     statusCode = error.statusCode;
     message = error.message;
   }

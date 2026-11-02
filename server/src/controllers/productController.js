@@ -3,6 +3,7 @@ import {
   createVendorProduct,
   deleteVendorProduct,
   getPublicProductBySlug,
+  getPublicProductById,
   getVendorProduct,
   listPendingProducts,
   listPublicProducts,
@@ -58,5 +59,10 @@ export async function listPublicProductsController(req, res, next) {
 
 export async function getPublicProductController(req, res, next) {
   try { return res.status(200).json({ success: true, data: { product: await getPublicProductBySlug(req.params.slug) } }); }
+  catch (error) { return next(error); }
+}
+
+export async function getPublicProductByIdController(req, res, next) {
+  try { return res.status(200).json({ success: true, data: { product: await getPublicProductById(req.params.id) } }); }
   catch (error) { return next(error); }
 }

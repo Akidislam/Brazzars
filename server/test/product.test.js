@@ -340,6 +340,10 @@ test('public detail hides pending and missing products, but returns approved pro
     assert.equal(visible.response.status, 200);
     assert.equal(visible.body.data.product.slug, 'visible-bag');
     assert.equal(Object.hasOwn(visible.body.data.product, 'vendor'), false);
+    const visibleById = await request(baseUrl, `/api/products/id/${approved._id}`, { auth: false });
+    assert.equal(visibleById.response.status, 200);
+    assert.equal(visibleById.body.data.product.id, approved._id.toString());
+    assert.equal((await request(baseUrl, `/api/products/id/${pending._id}`, { auth: false })).response.status, 404);
   });
 });
 

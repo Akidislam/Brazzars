@@ -8,6 +8,8 @@ import adminProductRoutes from './routes/adminProductRoutes.js';
 import publicProductRoutes from './routes/publicProductRoutes.js';
 import categoryRoutes from './routes/categoryRoutes.js';
 import shopRoutes from './routes/shopRoutes.js';
+import orderRoutes from './routes/orderRoutes.js';
+import vendorOrderRoutes from './routes/vendorOrderRoutes.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 
 const app = express();
@@ -21,6 +23,8 @@ app.use('/api/admin/products', adminProductRoutes);
 app.use('/api/products', publicProductRoutes);
 app.use('/api/categories', categoryRoutes);
 app.use('/api/shops', shopRoutes);
+app.use('/api/orders', orderRoutes);
+app.use('/api/vendor/orders', vendorOrderRoutes);
 app.use(notFoundHandler);
 app.use(errorHandler);
 

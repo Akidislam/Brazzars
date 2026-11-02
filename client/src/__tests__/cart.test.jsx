@@ -10,8 +10,8 @@ import App from '../App.jsx';
 vi.mock('../services/api.js', () => ({ default: { get: vi.fn(), post: vi.fn() } }));
 
 const products = {
-  'woven-basket': { id: 'product-1', name: 'Woven Basket', slug: 'woven-basket', price: 100, stock: 2, status: 'approved', isActive: true, images: ['https://images.example.test/basket.jpg'], shop: { shopName: 'Jute House', slug: 'jute-house', status: 'approved' }, category: { name: 'Home & Living', slug: 'home-living' } },
-  'sold-out-lamp': { id: 'product-2', name: 'Sold Out Lamp', slug: 'sold-out-lamp', price: 250, stock: 0, status: 'approved', isActive: true, images: [], shop: { shopName: 'Lamp Works', slug: 'lamp-works', status: 'approved' } },
+  'woven-basket': { id: '64b000000000000000000001', name: 'Woven Basket', slug: 'woven-basket', price: 100, stock: 2, status: 'approved', isActive: true, images: ['https://images.example.test/basket.jpg'], shop: { shopName: 'Jute House', slug: 'jute-house', status: 'approved' }, category: { name: 'Home & Living', slug: 'home-living' } },
+  'sold-out-lamp': { id: '64b000000000000000000002', name: 'Sold Out Lamp', slug: 'sold-out-lamp', price: 250, stock: 0, status: 'approved', isActive: true, images: [], shop: { shopName: 'Lamp Works', slug: 'lamp-works', status: 'approved' } },
 };
 
 function response(data) { return { data: { success: true, data } }; }
@@ -26,6 +26,10 @@ beforeEach(() => {
   window.sessionStorage.clear();
   api.get.mockReset();
   api.get.mockImplementation(async (path) => {
+    if (path.startsWith('/products/id/')) {
+      const product = Object.values(products).find((entry) => entry.id === path.split('/').at(-1));
+      return product ? response({ product }) : response({});
+    }
     const match = path.match(/^\/products\/([^?]+)/);
     const slug = match ? decodeURIComponent(match[1]) : '';
     if (slug === 'missing-product') throw { response: { status: 404, data: { message: 'Product not found.' } } };
@@ -44,7 +48,7 @@ describe('customer cart', () => {
     await user.click(screen.getByRole('button', { name: 'Add to cart' }));
     expect(await screen.findByText('Added to your cart.')).toBeTruthy();
     expect(screen.getByRole('link', { name: 'Cart, 1 item' })).toBeTruthy();
-    expect(JSON.parse(window.localStorage.getItem('brazzars_cart_guest'))).toEqual([{ slug: 'woven-basket', quantity: 1 }]);
+    expect(JSON.parse(window.localStorage.getItem('brazzars_cart_guest'))).toEqual([{ slug: 'woven-basket', productId: products['woven-basket'].id, quantity: 1 }]);
   });
 
   it('increments duplicate products, enforces stock, and prevents duplicate entries', async () => {
@@ -56,7 +60,7 @@ describe('customer cart', () => {
     expect(await screen.findByRole('link', { name: 'Cart, 2 items' })).toBeTruthy();
     await user.click(addButton);
     expect(await screen.findByText('Only 2 of this item are currently available.')).toBeTruthy();
-    expect(JSON.parse(window.localStorage.getItem('brazzars_cart_guest'))).toEqual([{ slug: 'woven-basket', quantity: 2 }]);
+    expect(JSON.parse(window.localStorage.getItem('brazzars_cart_guest'))).toEqual([{ slug: 'woven-basket', productId: products['woven-basket'].id, quantity: 2 }]);
   });
 
   it('adds products from product cards without opening product details', async () => {
@@ -72,7 +76,7 @@ describe('customer cart', () => {
     await user.click(await screen.findByRole('button', { name: 'Add to cart' }));
     expect(await screen.findByText('Added to cart.')).toBeTruthy();
     expect(screen.getByRole('heading', { name: /Find your next/ })).toBeTruthy();
-    expect(JSON.parse(window.localStorage.getItem('brazzars_cart_guest'))).toEqual([{ slug: 'woven-basket', quantity: 1 }]);
+    expect(JSON.parse(window.localStorage.getItem('brazzars_cart_guest'))).toEqual([{ slug: 'woven-basket', productId: products['woven-basket'].id, quantity: 1 }]);
   });
 
   it('changes quantity, calculates totals from product price, and removes items', async () => {
@@ -143,20 +147,66 @@ describe('customer cart', () => {
     expect(window.localStorage.getItem('brazzars_cart_guest')).toBe('[]');
   });
 
-  it('keeps authenticated customer cart data separate from the guest cart', async () => {
+  it('moves guest cart data into the authenticated customer cart', async () => {
     const user = userEvent.setup();
     const customer = { id: 'customer-42', name: 'Nila Rahman', email: 'nila@example.test', role: 'customer' };
     window.sessionStorage.setItem('brazzars_access_token', 'customer-session-token');
     window.localStorage.setItem('brazzars_cart_guest', JSON.stringify([{ slug: 'sold-out-lamp', quantity: 1 }]));
     api.get.mockImplementation(async (path) => {
       if (path === '/auth/me') return response({ user: customer });
+      if (path.startsWith('/products/id/')) {
+        const product = Object.values(products).find((entry) => entry.id === path.split('/').at(-1));
+        return product ? response({ product }) : response({});
+      }
       const slug = path.split('/').at(-1);
       return products[slug] ? response({ product: products[slug] }) : response({});
     });
     renderApp('/products/woven-basket');
     await user.click(await screen.findByRole('button', { name: 'Add to cart' }));
-    expect(await screen.findByRole('link', { name: 'Cart, 1 item' })).toBeTruthy();
-    expect(JSON.parse(window.localStorage.getItem('brazzars_cart_customer_customer-42'))).toEqual([{ slug: 'woven-basket', quantity: 1 }]);
-    expect(JSON.parse(window.localStorage.getItem('brazzars_cart_guest'))).toEqual([{ slug: 'sold-out-lamp', quantity: 1 }]);
+    expect(await screen.findByRole('link', { name: 'Cart, 2 items' })).toBeTruthy();
+    expect(JSON.parse(window.localStorage.getItem('brazzars_cart_customer_customer-42'))).toEqual([
+      { slug: 'sold-out-lamp', productId: products['sold-out-lamp'].id, quantity: 1 },
+      { slug: 'woven-basket', productId: products['woven-basket'].id, quantity: 1 },
+    ]);
+    expect(window.localStorage.getItem('brazzars_cart_guest')).toBeNull();
+  });
+
+  it('places an authenticated COD order and clears the purchased cart only after success', async () => {
+    const user = userEvent.setup();
+    const customer = { id: 'customer-42', name: 'Nila Rahman', email: 'nila@example.test', role: 'customer' };
+    window.sessionStorage.setItem('brazzars_access_token', 'customer-session-token');
+    window.localStorage.setItem('brazzars_cart_customer_customer-42', JSON.stringify([{ slug: 'woven-basket', productId: products['woven-basket'].id, quantity: 1 }]));
+    api.get.mockImplementation(async (path) => {
+      if (path === '/auth/me') return response({ user: customer });
+      if (path.startsWith('/products/id/')) return response({ product: products['woven-basket'] });
+      return response({});
+    });
+    api.post.mockResolvedValue(response({ order: { id: 'order-123', orderNumber: 'BRZ123', total: 100, items: [], createdAt: new Date().toISOString(), status: 'PENDING' }, replayed: false }));
+    renderApp('/checkout');
+    await user.type(await screen.findByLabelText('Phone number'), '01700123456');
+    await user.type(screen.getByLabelText('Street address'), '12 Lake Road');
+    await user.type(screen.getByLabelText('City / area'), 'Dhaka');
+    await user.type(screen.getByLabelText('District'), 'Dhaka');
+    await user.click(screen.getByRole('button', { name: 'Place order' }));
+    expect(await screen.findByRole('heading', { name: 'Thank you for your order.' })).toBeTruthy();
+    expect(api.post).toHaveBeenCalledWith('/orders', expect.objectContaining({ paymentMethod: 'COD', items: [{ productId: products['woven-basket'].id, quantity: 1 }] }), expect.objectContaining({ headers: expect.objectContaining({ 'Idempotency-Key': expect.any(String) }) }));
+    expect(JSON.parse(window.localStorage.getItem('brazzars_cart_customer_customer-42'))).toEqual([]);
+  });
+
+  it('preserves the cart when checkout fails', async () => {
+    const user = userEvent.setup();
+    const customer = { id: 'customer-42', name: 'Nila Rahman', email: 'nila@example.test', role: 'customer' };
+    window.sessionStorage.setItem('brazzars_access_token', 'customer-session-token');
+    window.localStorage.setItem('brazzars_cart_customer_customer-42', JSON.stringify([{ slug: 'woven-basket', productId: products['woven-basket'].id, quantity: 1 }]));
+    api.get.mockImplementation(async (path) => path === '/auth/me' ? response({ user: customer }) : response({ product: products['woven-basket'] }));
+    api.post.mockRejectedValue({ response: { data: { message: 'Not enough stock.' } } });
+    renderApp('/checkout');
+    await user.type(await screen.findByLabelText('Phone number'), '01700123456');
+    await user.type(screen.getByLabelText('Street address'), '12 Lake Road');
+    await user.type(screen.getByLabelText('City / area'), 'Dhaka');
+    await user.type(screen.getByLabelText('District'), 'Dhaka');
+    await user.click(screen.getByRole('button', { name: 'Place order' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('Not enough stock.');
+    expect(JSON.parse(window.localStorage.getItem('brazzars_cart_customer_customer-42'))).toEqual([{ slug: 'woven-basket', productId: products['woven-basket'].id, quantity: 1 }]);
   });
 });

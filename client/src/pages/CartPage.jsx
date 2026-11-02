@@ -23,12 +23,13 @@ function CartItem({ item, onQuantity, onRemove }) {
   const [message, setMessage] = useState('');
   const product = item.product;
   const image = product?.images?.find((value) => typeof value === 'string' && value.trim());
+  const itemKey = item.productId ?? item.slug;
   const available = item.status === 'available' && product;
   const subtotal = available ? Number(product.price) * item.quantity : null;
 
   function change(next) {
     setMessage('');
-    try { onQuantity(item.slug, next); }
+    try { onQuantity(itemKey, next); }
     catch (error) { setMessage(error.message); }
   }
 
@@ -50,7 +51,7 @@ function CartItem({ item, onQuantity, onRemove }) {
       <button type="button" aria-label={`Increase ${product?.name ?? item.slug} quantity`} disabled={!available || item.quantity >= Number(product?.stock)} onClick={() => change(item.quantity + 1)}><Plus size={15} /></button>
     </div>
     <strong className="cart-item-subtotal">{subtotal === null ? '—' : money(subtotal)}</strong>
-    <button className="cart-remove-button" type="button" aria-label={`Remove ${product?.name ?? item.slug}`} onClick={() => onRemove(item.slug)}><Trash2 size={17} /></button>
+    <button className="cart-remove-button" type="button" aria-label={`Remove ${product?.name ?? item.slug}`} onClick={() => onRemove(itemKey)}><Trash2 size={17} /></button>
   </article>;
 }
 
@@ -76,7 +77,7 @@ export default function CartPage() {
         <section className="cart-items-list" aria-label="Cart items">
           {groups.map((group) => <div className="cart-shop-group" key={group.key}>
             <h2>{group.name}</h2>
-            {group.items.map((item) => <CartItem key={item.slug} item={item} onQuantity={setQuantity} onRemove={removeProduct} />)}
+            {group.items.map((item) => <CartItem key={item.productId ?? item.slug} item={item} onQuantity={setQuantity} onRemove={removeProduct} />)}
           </div>)}
           <Link className="cart-continue-link" to="/search?q=">← Continue shopping</Link>
         </section>

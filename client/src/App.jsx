@@ -9,7 +9,8 @@ import ShopPage from './pages/ShopPage.jsx';
 import SearchPage from './pages/SearchPage.jsx';
 import ProductPage from './pages/ProductPage.jsx';
 import CartPage from './pages/CartPage.jsx';
-import CheckoutPlaceholderPage from './pages/CheckoutPlaceholderPage.jsx';
+import CheckoutPage from './pages/CheckoutPage.jsx';
+import OrderPages from './pages/OrderPages.jsx';
 import ProtectedRoute, { GuestOnlyRoute } from './routes/ProtectedRoute.jsx';
 
 export default function App() {
@@ -22,7 +23,12 @@ export default function App() {
       <Route path="/search" element={<SearchPage />} />
       <Route path="/products/:slug" element={<ProductPage />} />
       <Route path="/cart" element={<CartPage />} />
-      <Route path="/checkout" element={<CheckoutPlaceholderPage />} />
+      <Route element={<ProtectedRoute allowedRoles={['customer']} />}>
+        <Route path="/checkout" element={<CheckoutPage />} />
+        <Route path="/orders/confirmation/:id" element={<OrderPages mode="confirmation" />} />
+        <Route path="/account/orders" element={<OrderPages mode="list" />} />
+        <Route path="/account/orders/:id" element={<OrderPages mode="detail" />} />
+      </Route>
       <Route element={<GuestOnlyRoute />}>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/vendor/login" element={<LoginPage accountType="vendor" />} />

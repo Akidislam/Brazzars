@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import AuthLayout from '../layouts/AuthLayout.jsx';
 import { FormField, PasswordField } from '../components/auth/FormField.jsx';
 import FormNotice from '../components/auth/FormNotice.jsx';
@@ -16,6 +16,7 @@ function slugify(value) {
 export default function RegisterPage({ accountType = 'customer' }) {
   const vendor = accountType === 'vendor';
   const navigate = useNavigate();
+  const location = useLocation();
   const { registerCustomer, registerVendor } = useAuth();
   const [form, setForm] = useState({
     name: '', email: '', phone: '', password: '', confirmPassword: '',
@@ -82,7 +83,8 @@ export default function RegisterPage({ accountType = 'customer' }) {
         });
       }
 
-      navigate(roleHomePaths[result.user.role] ?? '/', {
+      const returnToCheckout = !vendor && result.user.role === 'customer' && location.state?.from?.pathname === '/checkout';
+      navigate(returnToCheckout ? '/checkout' : (roleHomePaths[result.user.role] ?? '/'), {
         replace: true,
         state: vendor
           ? { shopStatus: result.shop?.status, notice: 'Your application is in. Your shop needs Admin approval before it can be listed.' }
@@ -129,7 +131,7 @@ export default function RegisterPage({ accountType = 'customer' }) {
           {busy ? (vendor ? 'Sending your application…' : 'Creating your account…') : (vendor ? 'Submit shop application' : 'Create account')}
           {!busy && <span aria-hidden="true">→</span>}
         </button>
-        <p className="auth-switch">Already have an account? <Link to={vendor ? '/vendor/login' : '/login'}>{vendor ? 'Seller sign in' : 'Sign in'}</Link></p>
+        <p className="auth-switch">Already have an account? <Link to={vendor ? '/vendor/login' : '/login'} state={location.state}>{vendor ? 'Seller sign in' : 'Sign in'}</Link></p>
         {!vendor && <p className="auth-secondary-link">Selling something good? <Link to="/vendor/register">Open a seller account</Link></p>}
         {vendor && <p className="auth-approval-note">Submitting creates a pending shop. It will not appear publicly until an Admin approves it.</p>}
       </form>

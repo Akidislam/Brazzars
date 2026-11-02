@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useLocation, useParams } from 'react-router-dom';
+import { Link, useLocation, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Store } from 'lucide-react';
 import CustomerLayout from '../components/marketplace/CustomerLayout.jsx';
 import { RequestState } from '../components/marketplace/MarketplaceUI.jsx';
@@ -9,9 +9,11 @@ import useMarketplaceRequest from '../hooks/useMarketplaceRequest.js';
 export default function ProductPage() {
   const { slug } = useParams();
   const location = useLocation();
+  const [searchParams] = useSearchParams();
+  const productId = searchParams.get('id');
   const { addProduct, addingSlugs } = useCart();
   const [cartMessage, setCartMessage] = useState('');
-  const productState = useMarketplaceRequest(`/products/${encodeURIComponent(slug)}`);
+  const productState = useMarketplaceRequest(productId ? `/products/id/${encodeURIComponent(productId)}` : `/products/${encodeURIComponent(slug)}`);
   const product = productState.data?.product;
   const image = Array.isArray(product?.images) ? product.images.find((item) => typeof item === 'string' ? item : item?.url) : null;
   const imageUrl = typeof image === 'string' ? image : image?.url;
@@ -24,7 +26,7 @@ export default function ProductPage() {
   async function handleAdd() {
     setCartMessage('');
     try {
-      await addProduct(slug);
+      await addProduct(slug, 1, product?.id);
       setCartMessage('Added to your cart.');
     } catch (error) {
       setCartMessage(error.message);

@@ -20,7 +20,7 @@ function readStoredCart(key) {
     if (!Array.isArray(value)) return [];
     return value.filter((item) => typeof item?.slug === 'string' && item.slug.length > 0
       && Number.isSafeInteger(item.quantity) && item.quantity >= 1)
-      .map(({ slug, quantity }) => ({ slug, quantity, product: null, status: 'checking', reason: '' }));
+      .map(({ slug, productId, quantity }) => ({ slug, productId, quantity, product: null, status: 'checking', reason: '' }));
   } catch {
     return [];
   }
@@ -32,15 +32,17 @@ function isPublicProduct(product) {
   if (product.isActive === false) return false;
   if (product.shop?.status && product.shop.status !== 'approved') return false;
   if (product.shop?.isActive === false) return false;
-  return Number.isFinite(Number(product.price)) && Number(product.price) > 0
+  return typeof product.id === 'string' && /^[a-f\d]{24}$/i.test(product.id)
+    && Number.isFinite(Number(product.price)) && Number(product.price) > 0
     && Number.isSafeInteger(Number(product.stock)) && Number(product.stock) >= 0;
 }
 
-async function fetchPublicProduct(slug) {
+async function fetchPublicProduct(slug, productId) {
   try {
-    const response = await api.get(`/products/${encodeURIComponent(slug)}`);
+    const path = productId ? `/products/id/${encodeURIComponent(productId)}` : `/products/${encodeURIComponent(slug)}`;
+    const response = await api.get(path);
     const product = response?.data?.data?.product;
-    if (!isPublicProduct(product)) {
+    if (!isPublicProduct(product) || product.slug !== slug || (productId && product.id !== productId)) {
       const error = new Error('This product is not available to add to your cart.');
       error.code = 'UNAVAILABLE';
       throw error;
@@ -58,15 +60,32 @@ async function fetchPublicProduct(slug) {
 }
 
 function normalizeEntry(product, quantity) {
-  if (Number(product.stock) < 1) return { slug: product.slug, quantity, product, status: 'unavailable', reason: 'This item is out of stock.' };
+  if (Number(product.stock) < 1) return { slug: product.slug, productId: product.id, quantity, product, status: 'unavailable', reason: 'This item is out of stock.' };
   const safeQuantity = Math.min(quantity, Number(product.stock));
   return {
     slug: product.slug,
+    productId: product.id,
     quantity: safeQuantity,
     product,
     status: 'available',
     reason: safeQuantity < quantity ? `Quantity updated to the ${safeQuantity} currently available.` : '',
   };
+}
+
+function serializeItems(items) {
+  return items.map(({ slug, productId, quantity }) => ({ slug, ...(productId ? { productId } : {}), quantity }));
+}
+
+function mergeCartItems(primaryItems, guestItems) {
+  const merged = [...primaryItems];
+  for (const guestItem of guestItems) {
+    const match = merged.find((item) => item.productId && guestItem.productId
+      ? item.productId === guestItem.productId
+      : item.slug === guestItem.slug);
+    if (match) match.quantity += guestItem.quantity;
+    else merged.push(guestItem);
+  }
+  return merged;
 }
 
 export function CartProvider({ children }) {
@@ -88,7 +107,7 @@ export function CartProvider({ children }) {
   const validateSavedItems = useCallback(async (key, savedItems, active) => {
     const verified = await Promise.all(savedItems.map(async (item) => {
       try {
-        const product = await fetchPublicProduct(item.slug);
+        const product = await fetchPublicProduct(item.slug, item.productId);
         return normalizeEntry(product, item.quantity);
       } catch (error) {
         return {
@@ -112,18 +131,31 @@ export function CartProvider({ children }) {
     activeKeyRef.current = cartKey;
     if (!cartKey) return undefined;
     let active = true;
-    const stored = readStoredCart(cartKey);
+    let stored = readStoredCart(cartKey);
+    let storageError = '';
+    if (user?.role === 'customer') {
+      const guestItems = readStoredCart(GUEST_CART_KEY);
+      if (guestItems.length > 0) {
+        stored = mergeCartItems(stored, guestItems);
+        try {
+          window.localStorage.setItem(cartKey, JSON.stringify(serializeItems(stored)));
+          window.localStorage.removeItem(GUEST_CART_KEY);
+        } catch {
+          storageError = 'Your guest cart could not be moved to this customer account. Check local storage settings.';
+        }
+      }
+    }
     commitItems(stored);
     setLoadedKey(cartKey);
-    setLoadError('');
+    setLoadError(storageError);
     setIsLoading(stored.length > 0);
     if (stored.length) void validateSavedItems(cartKey, stored, () => active);
     return () => { active = false; };
-  }, [cartKey, commitItems, validateSavedItems]);
+  }, [cartKey, user, commitItems, validateSavedItems]);
 
   useEffect(() => {
     if (!cartKey || loadedKey !== cartKey) return;
-    const serializable = items.map(({ slug, quantity }) => ({ slug, quantity }));
+    const serializable = serializeItems(items);
     try {
       window.localStorage.setItem(cartKey, JSON.stringify(serializable));
     } catch {
@@ -131,24 +163,26 @@ export function CartProvider({ children }) {
     }
   }, [cartKey, items, loadedKey]);
 
-  const addProduct = useCallback(async (slug, requestedQuantity = 1) => {
+  const addProduct = useCallback(async (slug, requestedQuantity = 1, productId) => {
     if (!Number.isSafeInteger(requestedQuantity) || requestedQuantity < 1) throw new Error('Choose a quantity of at least 1.');
     if (!cartKey || loadedKey !== cartKey || isLoading) throw new Error('Your cart is still being checked. Please try again shortly.');
     setAddingSlugs((current) => current.includes(slug) ? current : [...current, slug]);
     try {
-      const product = await fetchPublicProduct(slug);
+      const product = await fetchPublicProduct(slug, productId);
       if (Number(product.stock) < 1) {
         const error = new Error('This product is out of stock.');
         error.code = 'UNAVAILABLE';
         throw error;
       }
       const current = itemsRef.current;
-      const existing = current.find((item) => item.slug === product.slug);
+      const existing = current.find((item) => item.productId
+        ? item.productId === product.id
+        : item.slug === product.slug);
       const nextQuantity = (existing?.quantity ?? 0) + requestedQuantity;
       if (nextQuantity > Number(product.stock)) throw new Error(`Only ${product.stock} of this item are currently available.`);
-      const entry = { slug: product.slug, quantity: nextQuantity, product, status: 'available', reason: '' };
+      const entry = { slug: product.slug, productId: product.id, quantity: nextQuantity, product, status: 'available', reason: '' };
       commitItems(existing
-        ? current.map((item) => item.slug === product.slug ? entry : item)
+        ? current.map((item) => (item.productId ?? item.slug) === (existing.productId ?? existing.slug) ? entry : item)
         : [...current, entry]);
       setLoadError('');
       return entry;
@@ -161,20 +195,25 @@ export function CartProvider({ children }) {
     if (!cartKey || loadedKey !== cartKey || isLoading) throw new Error('Your cart is still being checked. Please try again shortly.');
     if (!Number.isSafeInteger(quantity) || quantity < 1) throw new Error('Quantity must be at least 1.');
     const current = itemsRef.current;
-    const item = current.find((entry) => entry.slug === slug);
+    const item = current.find((entry) => (entry.productId ?? entry.slug) === slug);
     if (!item || item.status !== 'available' || !item.product) throw new Error('This item is not currently available.');
     if (quantity > Number(item.product.stock)) throw new Error(`Only ${item.product.stock} of this item are currently available.`);
-    commitItems(current.map((entry) => entry.slug === slug ? { ...entry, quantity } : entry));
+    commitItems(current.map((entry) => (entry.productId ?? entry.slug) === slug ? { ...entry, quantity } : entry));
   }, [cartKey, loadedKey, isLoading, commitItems]);
 
   const removeProduct = useCallback((slug) => {
     if (!cartKey || loadedKey !== cartKey) return;
-    commitItems(itemsRef.current.filter((item) => item.slug !== slug));
+    commitItems(itemsRef.current.filter((item) => (item.productId ?? item.slug) !== slug));
   }, [cartKey, loadedKey, commitItems]);
+
+  const clearProducts = useCallback((productIds) => {
+    const purchasedIds = new Set(productIds.map(String));
+    commitItems(itemsRef.current.filter((item) => !purchasedIds.has(String(item.productId ?? item.product?.id))));
+  }, [commitItems]);
 
   const refreshCart = useCallback(async () => {
     if (!cartKey) return;
-    const saved = itemsRef.current.map(({ slug, quantity }) => ({ slug, quantity, product: null, status: 'checking', reason: '' }));
+    const saved = itemsRef.current.map(({ slug, productId, quantity }) => ({ slug, productId, quantity, product: null, status: 'checking', reason: '' }));
     commitItems(saved);
     setIsLoading(saved.length > 0);
     setLoadError('');
@@ -197,8 +236,9 @@ export function CartProvider({ children }) {
     addProduct,
     setQuantity,
     removeProduct,
+    clearProducts,
     refreshCart,
-  }), [visibleItems, itemCount, subtotal, isReady, isLoading, loadError, addingSlugs, addProduct, setQuantity, removeProduct, refreshCart]);
+  }), [visibleItems, itemCount, subtotal, isReady, isLoading, loadError, addingSlugs, addProduct, setQuantity, removeProduct, clearProducts, refreshCart]);
 
   return <CartContext.Provider value={value}>{children}</CartContext.Provider>;
 }

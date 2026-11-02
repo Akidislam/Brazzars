@@ -33,7 +33,7 @@ export function ProductCard({ product }) {
   async function handleAdd() {
     setCartMessage('');
     try {
-      await addProduct(product.slug);
+      await addProduct(product.slug, 1, product.id);
       setCartMessage('Added to cart.');
     } catch (error) {
       setCartMessage(error.message);
@@ -41,7 +41,7 @@ export function ProductCard({ product }) {
   }
 
   return <article className="product-card">
-    <Link to={`/products/${encodeURIComponent(product.slug)}`} state={{ from: `${location.pathname}${location.search}` }} className="product-card-link" aria-label={`View ${product.name}`}>
+    <Link to={`/products/${encodeURIComponent(product.slug)}?id=${encodeURIComponent(product.id)}`} state={{ from: `${location.pathname}${location.search}` }} className="product-card-link" aria-label={`View ${product.name}`}>
       <ProductImage images={product.images} name={product.name ?? 'Product'} />
       <div className="product-card-copy">
         {category?.name && <span className="product-category-label">{category.name}</span>}

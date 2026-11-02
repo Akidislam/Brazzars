@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import AuthLayout from '../layouts/AuthLayout.jsx';
 import { FormField, PasswordField } from '../components/auth/FormField.jsx';
 import FormNotice from '../components/auth/FormNotice.jsx';
@@ -12,6 +12,7 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export default function LoginPage({ accountType = 'customer' }) {
   const vendor = accountType === 'vendor';
   const navigate = useNavigate();
+  const location = useLocation();
   const { login } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -29,7 +30,8 @@ export default function LoginPage({ accountType = 'customer' }) {
     setBusy(true);
     try {
       const result = await login({ email: email.trim(), password });
-      navigate(roleHomePaths[result.user.role] ?? '/', {
+      const returnToCheckout = !vendor && result.user.role === 'customer' && location.state?.from?.pathname === '/checkout';
+      navigate(returnToCheckout ? '/checkout' : (roleHomePaths[result.user.role] ?? '/'), {
         replace: true,
         state: { notice: 'Welcome back to Brazzars.' },
       });
@@ -76,7 +78,7 @@ export default function LoginPage({ accountType = 'customer' }) {
         </button>
         <p className="auth-switch">
           {vendor ? 'New to selling on Brazzars?' : 'New to Brazzars?'}{' '}
-          <Link to={vendor ? '/vendor/register' : '/register'}>{vendor ? 'Open a seller account' : 'Create an account'}</Link>
+          <Link to={vendor ? '/vendor/register' : '/register'} state={location.state}>{vendor ? 'Open a seller account' : 'Create an account'}</Link>
         </p>
         {!vendor && <p className="auth-secondary-link">Are you a seller? <Link to="/vendor/login">Sign in to your shop</Link></p>}
       </form>
