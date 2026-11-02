@@ -1,15 +1,29 @@
 import { createHash, randomBytes } from 'node:crypto';
 import mongoose from 'mongoose';
-import ParentOrder from '../models/ParentOrder.js';
+import ParentOrder, { ORDER_STATUSES } from '../models/ParentOrder.js';
 import Product from '../models/Product.js';
 import Shop from '../models/Shop.js';
 import User from '../models/User.js';
 import VendorOrder from '../models/VendorOrder.js';
 import { HttpError } from '../utils/httpError.js';
-import { parseOrderPagination, validateIdempotencyKey, validatePlaceOrder } from '../validators/orderValidator.js';
+import {
+  parseOrderPagination,
+  parseVendorOrderQuery,
+  validateIdempotencyKey,
+  validatePlaceOrder,
+  validateVendorOrderStatus,
+} from '../validators/orderValidator.js';
 
 const COMMISSION_RATE = 0.10;
 const TRANSACTION_REQUIRED_MESSAGE = 'Order placement requires MongoDB transactions, but transactions are unavailable on this database deployment. No order or stock changes were committed.';
+const STATUS_TRANSITIONS = {
+  PENDING: ['CONFIRMED', 'CANCELLED'],
+  CONFIRMED: ['PROCESSING', 'CANCELLED'],
+  PROCESSING: ['SHIPPED'],
+  SHIPPED: ['DELIVERED'],
+  DELIVERED: [],
+  CANCELLED: [],
+};
 
 function roundMoney(value) {
   return Math.round((value + Number.EPSILON) * 100) / 100;
@@ -18,6 +32,31 @@ function roundMoney(value) {
 function transactionUnsupported(error) {
   return error?.code === 20 || error?.codeName === 'IllegalOperation'
     || /transaction numbers are only allowed|transactions are not supported|replica set|mongos/i.test(error?.message ?? '');
+}
+
+function escapeRegex(value) { return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+async function ensureApprovedVendorShop(vendorId) {
+  const shop = await Shop.exists({ owner: vendorId, status: 'approved', isActive: { $ne: false } });
+  if (!shop) throw new HttpError(403, 'An approved active shop is required to manage vendor orders.');
+}
+
+// Parent status follows the least advanced non-cancelled vendor order. If every
+// child is cancelled, the parent is CANCELLED; cancelled children are ignored
+// when the remaining children continue through fulfillment.
+function aggregateParentStatus(vendorStatuses) {
+  const active = vendorStatuses.filter((status) => status !== 'CANCELLED');
+  if (!active.length) return 'CANCELLED';
+  if (active.every((status) => status === 'DELIVERED')) return 'DELIVERED';
+  const progress = ['PENDING', 'CONFIRMED', 'PROCESSING', 'SHIPPED', 'DELIVERED'];
+  return active.reduce((earliest, status) => progress.indexOf(status) < progress.indexOf(earliest) ? status : earliest, active[0]);
+}
+
+function historyUpdate(order, status, actorId, actorRole) {
+  const event = { status, changedAt: new Date(), actor: actorId, actorRole };
+  if (order.statusHistory?.length) return { $push: { statusHistory: event }, $set: { status } };
+  const priorEvent = { status: order.status, changedAt: order.createdAt ?? new Date(), actor: null, actorRole: 'system' };
+  return { $set: { status, statusHistory: [priorEvent, event] } };
 }
 
 function orderHash(input) {
@@ -80,12 +119,16 @@ function vendorOrderView(order) {
     id: String(order._id ?? order.id),
     orderNumber: order.orderNumber,
     parentOrder: String(order.parentOrder),
+    parentOrderNumber: order.parentOrderNumber ?? String(order.parentOrder),
     customerSnapshot: order.customerSnapshot,
     deliveryAddress: order.deliveryAddress,
     shopSnapshots: order.shopSnapshots,
     paymentMethod: order.paymentMethod,
     paymentStatus: order.paymentStatus,
     status: order.status,
+    statusHistory: (order.statusHistory ?? []).map((entry) => ({
+      status: entry.status, changedAt: entry.changedAt, actorRole: entry.actorRole,
+    })),
     items: (order.items ?? []).map(safeLine),
     subtotal: order.subtotal,
     commissionTotal: order.commissionTotal,
@@ -195,6 +238,7 @@ export async function placeCustomerOrder(customerId, body, rawIdempotencyKey) {
         deliveryAddress: input.deliveryAddress,
         paymentMethod: 'COD',
         status: 'PENDING',
+        statusHistory: [{ status: 'PENDING', changedAt: new Date(), actor: customerId, actorRole: 'customer' }],
         paymentStatus: 'PENDING',
         subtotal,
         deliveryFee: 0,
@@ -224,6 +268,7 @@ export async function placeCustomerOrder(customerId, body, rawIdempotencyKey) {
         }]));
         vendorDocuments.push({
           orderNumber: `${parentNumber}-V${vendorIndex}`,
+          parentOrderNumber: parentNumber,
           parentOrder: parentOrder._id,
           customer: customerId,
           customerSnapshot: parentOrder.customerSnapshot,
@@ -234,6 +279,7 @@ export async function placeCustomerOrder(customerId, body, rawIdempotencyKey) {
           paymentMethod: 'COD',
           paymentStatus: 'PENDING',
           status: 'PENDING',
+          statusHistory: [{ status: 'PENDING', changedAt: new Date(), actor: customerId, actorRole: 'customer' }],
           subtotal: vendorSubtotal,
           commissionTotal: vendorCommission,
           vendorEarningsTotal: vendorEarnings,
@@ -290,19 +336,73 @@ export async function getCustomerOrder(customerId, orderId) {
 }
 
 export async function listVendorOrders(vendorId, query) {
-  const { page, limit } = parseOrderPagination(query);
+  await ensureApprovedVendorShop(vendorId);
+  const { page, limit, status, search, sort } = parseVendorOrderQuery(query);
   const filter = { vendor: vendorId };
+  if (status) filter.status = status;
+  if (search) filter.$or = [
+    { orderNumber: { $regex: escapeRegex(search), $options: 'i' } },
+    { parentOrderNumber: { $regex: escapeRegex(search), $options: 'i' } },
+  ];
   const skip = (page - 1) * limit;
+  const sortOrder = sort === 'oldest' ? 1 : -1;
   const [orders, total] = await Promise.all([
-    VendorOrder.find(filter).sort({ createdAt: -1, _id: -1 }).skip(skip).limit(limit).lean(),
+    VendorOrder.find(filter).sort({ createdAt: sortOrder, _id: sortOrder }).skip(skip).limit(limit).lean(),
     VendorOrder.countDocuments(filter),
   ]);
   return { orders: orders.map(vendorOrderView), pagination: { page, limit, total, pages: Math.ceil(total / limit) } };
 }
 
+export async function getVendorOrderStatistics(vendorId) {
+  await ensureApprovedVendorShop(vendorId);
+  const counts = await Promise.all([null, ...ORDER_STATUSES].map(async (status) => [status ?? 'ALL', await VendorOrder.countDocuments({ vendor: vendorId, ...(status ? { status } : {}) })]));
+  return Object.fromEntries(counts);
+}
+
 export async function getVendorOrder(vendorId, orderId) {
+  await ensureApprovedVendorShop(vendorId);
   if (!mongoose.isValidObjectId(orderId)) throw new HttpError(404, 'Order not found.');
   const order = await VendorOrder.findOne({ _id: orderId, vendor: vendorId }).lean();
   if (!order) throw new HttpError(404, 'Order not found.');
   return vendorOrderView(order);
+}
+
+export async function updateVendorOrderStatus(vendorId, actorId, body, orderId) {
+  await ensureApprovedVendorShop(vendorId);
+  if (!mongoose.isValidObjectId(orderId)) throw new HttpError(404, 'Order not found.');
+  const nextStatus = validateVendorOrderStatus(body);
+  const session = await mongoose.startSession();
+  try {
+    await session.withTransaction(async () => {
+      const order = await VendorOrder.findOne({ _id: orderId, vendor: vendorId }).session(session).lean();
+      if (!order) throw new HttpError(404, 'Order not found.');
+      if (!STATUS_TRANSITIONS[order.status]?.includes(nextStatus)) {
+        throw new HttpError(409, `Order cannot move from ${order.status} to ${nextStatus}.`);
+      }
+      const updated = await VendorOrder.updateOne(
+        { _id: order._id, vendor: vendorId, status: order.status },
+        historyUpdate(order, nextStatus, actorId, 'vendor'),
+        { session },
+      );
+      if (updated.matchedCount !== 1) throw new HttpError(409, 'Order status changed. Refresh and try again.');
+
+      const parentOrder = await ParentOrder.findById(order.parentOrder).session(session).lean();
+      if (!parentOrder) throw new HttpError(409, 'The parent order could not be found.');
+      const vendorOrders = await VendorOrder.find({ parentOrder: order.parentOrder }).session(session).lean();
+      const parentStatus = aggregateParentStatus(vendorOrders.map((entry) => entry.status));
+      if (parentStatus !== parentOrder.status) {
+        await ParentOrder.updateOne(
+          { _id: parentOrder._id, status: parentOrder.status },
+          historyUpdate(parentOrder, parentStatus, actorId, 'vendor'),
+          { session },
+        );
+      }
+    });
+  } catch (error) {
+    if (transactionUnsupported(error)) {
+      throw new HttpError(503, 'Order status updates require MongoDB transactions, but transactions are unavailable. No status changes were committed.', { expose: true });
+    }
+    throw error;
+  } finally { await session.endSession(); }
+  return getVendorOrder(vendorId, orderId);
 }

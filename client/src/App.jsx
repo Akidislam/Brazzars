@@ -11,6 +11,7 @@ import ProductPage from './pages/ProductPage.jsx';
 import CartPage from './pages/CartPage.jsx';
 import CheckoutPage from './pages/CheckoutPage.jsx';
 import OrderPages from './pages/OrderPages.jsx';
+import VendorOrdersPage from './pages/VendorOrdersPage.jsx';
 import ProtectedRoute, { GuestOnlyRoute } from './routes/ProtectedRoute.jsx';
 
 export default function App() {
@@ -39,7 +40,9 @@ export default function App() {
         <Route path="/account" element={<DashboardPage role="customer" />} />
       </Route>
       <Route element={<ProtectedRoute allowedRoles={['vendor']} loginPath="/vendor/login" />}>
-        <Route path="/vendor/dashboard" element={<DashboardPage role="vendor" />} />
+        <Route path="/vendor/dashboard" element={<VendorOrdersPage />} />
+        <Route path="/vendor/orders" element={<VendorOrdersPage />} />
+        <Route path="/vendor/orders/:id" element={<VendorOrdersPage mode="detail" />} />
       </Route>
       <Route element={<ProtectedRoute allowedRoles={['admin']} />}>
         <Route path="/admin/dashboard" element={<DashboardPage role="admin" />} />

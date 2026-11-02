@@ -80,3 +80,32 @@ export function parseOrderPagination(query) {
   if (Object.keys(query).some((key) => !['page', 'limit'].includes(key))) throw new HttpError(400, 'An unsupported query parameter was provided.');
   return { page: parse(query.page, 1, 'Page', 1000000), limit: parse(query.limit, 20, 'Limit', 100) };
 }
+
+const VENDOR_ORDER_STATUSES = ['PENDING', 'CONFIRMED', 'PROCESSING', 'SHIPPED', 'DELIVERED', 'CANCELLED'];
+
+export function parseVendorOrderQuery(query) {
+  if (Object.keys(query).some((key) => !['page', 'limit', 'status', 'search', 'sort'].includes(key))) {
+    throw new HttpError(400, 'An unsupported query parameter was provided.');
+  }
+  const { page, limit } = parseOrderPagination({ page: query.page, limit: query.limit });
+  let status;
+  if (query.status !== undefined && query.status !== 'ALL') {
+    if (!VENDOR_ORDER_STATUSES.includes(query.status)) throw new HttpError(400, 'Order status filter is invalid.');
+    status = query.status;
+  }
+  let search;
+  if (query.search !== undefined) {
+    if (typeof query.search !== 'string' || query.search.trim().length > 100) throw new HttpError(400, 'Order search must be 100 characters or fewer.');
+    search = query.search.trim();
+  }
+  const sort = query.sort ?? 'newest';
+  if (!['newest', 'oldest'].includes(sort)) throw new HttpError(400, 'Order sort is invalid.');
+  return { page, limit, status, search, sort };
+}
+
+export function validateVendorOrderStatus(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).length !== 1 || !VENDOR_ORDER_STATUSES.includes(body.status)) {
+    throw new HttpError(400, 'A valid order status is required.');
+  }
+  return body.status;
+}

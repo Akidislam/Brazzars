@@ -47,6 +47,12 @@ const parentOrderSchema = new mongoose.Schema({
   paymentMethod: { type: String, enum: ['COD'], required: true, default: 'COD' },
   paymentStatus: { type: String, enum: ['PENDING', 'PAID', 'FAILED', 'REFUNDED'], default: 'PENDING' },
   status: { type: String, enum: ORDER_STATUSES, default: 'PENDING', index: true },
+  statusHistory: [{
+    status: { type: String, enum: ORDER_STATUSES, required: true },
+    changedAt: { type: Date, required: true, default: Date.now },
+    actor: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    actorRole: { type: String, enum: ['customer', 'vendor', 'admin', 'system'], required: true },
+  }],
   subtotal: { type: Number, required: true, min: 0 },
   deliveryFee: { type: Number, required: true, min: 0, default: 0 },
   total: { type: Number, required: true, min: 0 },

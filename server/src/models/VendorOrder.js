@@ -3,6 +3,7 @@ import { addressSnapshotSchema, orderLineSchema, ORDER_STATUSES } from './Parent
 
 const vendorOrderSchema = new mongoose.Schema({
   orderNumber: { type: String, required: true, unique: true, trim: true },
+  parentOrderNumber: { type: String, required: true, trim: true, index: true },
   parentOrder: { type: mongoose.Schema.Types.ObjectId, ref: 'ParentOrder', required: true, index: true },
   customer: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
   customerSnapshot: {
@@ -20,6 +21,12 @@ const vendorOrderSchema = new mongoose.Schema({
   paymentMethod: { type: String, enum: ['COD'], required: true, default: 'COD' },
   paymentStatus: { type: String, enum: ['PENDING', 'PAID', 'FAILED', 'REFUNDED'], default: 'PENDING' },
   status: { type: String, enum: ORDER_STATUSES, default: 'PENDING', index: true },
+  statusHistory: [{
+    status: { type: String, enum: ORDER_STATUSES, required: true },
+    changedAt: { type: Date, required: true, default: Date.now },
+    actor: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    actorRole: { type: String, enum: ['customer', 'vendor', 'admin', 'system'], required: true },
+  }],
   subtotal: { type: Number, required: true, min: 0 },
   commissionTotal: { type: Number, required: true, min: 0 },
   vendorEarningsTotal: { type: Number, required: true, min: 0 },

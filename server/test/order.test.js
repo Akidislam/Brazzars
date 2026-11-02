@@ -30,8 +30,11 @@ let originalJwtSecret;
 function same(left, right) { return String(left?._id ?? left) === String(right?._id ?? right); }
 
 function matches(record, filter) {
+  if (filter.$or && !filter.$or.some((condition) => matches(record, condition))) return false;
   return Object.entries(filter).every(([key, expected]) => {
+    if (key === '$or') return true;
     const actual = record[key];
+    if (expected && typeof expected === 'object' && '$regex' in expected) return new RegExp(expected.$regex, expected.$options).test(actual ?? '');
     if (expected === null) return actual == null;
     if (expected && typeof expected === 'object' && '$in' in expected) return expected.$in.some((value) => same(actual, value));
     if (expected && typeof expected === 'object' && '$ne' in expected) return !same(actual, expected.$ne);
@@ -91,6 +94,7 @@ function mockDatabase(context) {
   context.mock.method(User, 'findById', (id) => memoryQuery(() => state.users.find((user) => same(user._id, id)) ?? null));
   context.mock.method(User, 'find', (filter) => memoryQuery(() => state.users.filter((user) => matches(user, filter))));
   context.mock.method(Shop, 'find', (filter) => memoryQuery(() => state.shops.filter((shop) => matches(shop, filter))));
+  context.mock.method(Shop, 'exists', (filter) => Promise.resolve(state.shops.find((shop) => matches(shop, filter)) ?? null));
   context.mock.method(Product, 'find', (filter) => memoryQuery(() => state.products.filter((product) => matches(product, filter))));
   context.mock.method(Product, 'updateOne', async (filter, update) => {
     const product = state.products.find((item) => matches(item, filter));
@@ -99,6 +103,14 @@ function mockDatabase(context) {
     return { matchedCount: 1, modifiedCount: 1 };
   });
   context.mock.method(ParentOrder, 'findOne', (filter) => memoryQuery(() => state.parentOrders.find((order) => matches(order, filter)) ?? null));
+  context.mock.method(ParentOrder, 'findById', (id) => memoryQuery(() => state.parentOrders.find((order) => same(order._id, id)) ?? null));
+  context.mock.method(ParentOrder, 'updateOne', async (filter, update) => {
+    const order = state.parentOrders.find((entry) => matches(entry, filter));
+    if (!order) return { matchedCount: 0, modifiedCount: 0 };
+    if (update.$set) Object.assign(order, update.$set);
+    if (update.$push?.statusHistory) order.statusHistory = [...(order.statusHistory ?? []), update.$push.statusHistory];
+    return { matchedCount: 1, modifiedCount: 1 };
+  });
   context.mock.method(ParentOrder, 'create', async (documents) => {
     const saved = [];
     for (const input of documents) {
@@ -123,6 +135,13 @@ function mockDatabase(context) {
   });
   context.mock.method(VendorOrder, 'find', (filter) => memoryQuery((options) => sortAndPage(state.vendorOrders.filter((order) => matches(order, filter)), options)));
   context.mock.method(VendorOrder, 'findOne', (filter) => memoryQuery(() => state.vendorOrders.find((order) => matches(order, filter)) ?? null));
+  context.mock.method(VendorOrder, 'updateOne', async (filter, update) => {
+    const order = state.vendorOrders.find((entry) => matches(entry, filter));
+    if (!order) return { matchedCount: 0, modifiedCount: 0 };
+    if (update.$set) Object.assign(order, update.$set);
+    if (update.$push?.statusHistory) order.statusHistory = [...(order.statusHistory ?? []), update.$push.statusHistory];
+    return { matchedCount: 1, modifiedCount: 1 };
+  });
   context.mock.method(VendorOrder, 'countDocuments', async (filter) => state.vendorOrders.filter((order) => matches(order, filter)).length);
   context.mock.method(mongoose, 'startSession', async () => ({
     withTransaction: async (callback) => {
@@ -133,8 +152,8 @@ function mockDatabase(context) {
       }
       const snapshot = {
         products: state.products.map((product) => ({ ...product })),
-        parentOrders: [...state.parentOrders],
-        vendorOrders: [...state.vendorOrders],
+        parentOrders: state.parentOrders.map((order) => ({ ...order, statusHistory: [...(order.statusHistory ?? [])] })),
+        vendorOrders: state.vendorOrders.map((order) => ({ ...order, statusHistory: [...(order.statusHistory ?? [])] })),
       };
       try { return await callback(); }
       catch (error) {
@@ -307,5 +326,86 @@ test('transaction-unavailable deployments fail safely without writing an order o
     assert.equal(state.vendorOrders.length, 0);
     assert.equal(state.products[0].stock, 5);
     assert.equal(state.products[1].stock, 8);
+  });
+});
+
+test('vendor lists only own orders and can search, filter, sort, and paginate them', async (context) => {
+  await withServer(context, async (baseUrl) => {
+    await request(baseUrl, '/api/orders', { method: 'POST', userId: ids.customer, body: requestBody, idempotencyKey: IDEMPOTENCY_KEY });
+    const all = await request(baseUrl, '/api/vendor/orders?sort=oldest&limit=1', { userId: ids.vendorOne });
+    assert.equal(all.response.status, 200);
+    assert.equal(all.body.data.pagination.total, 1);
+    assert.equal(all.body.data.orders[0].items.length, 1);
+    assert.equal(all.body.data.orders[0].items[0].vendor, ids.vendorOne.toString());
+    const found = await request(baseUrl, `/api/vendor/orders?search=${all.body.data.orders[0].parentOrderNumber}&status=PENDING`, { userId: ids.vendorOne });
+    assert.equal(found.body.data.orders.length, 1);
+    assert.equal((await request(baseUrl, '/api/vendor/orders?status=UNKNOWN', { userId: ids.vendorOne })).response.status, 400);
+  });
+});
+
+test('vendors can only read and update their own vendor orders', async (context) => {
+  await withServer(context, async (baseUrl) => {
+    await request(baseUrl, '/api/orders', { method: 'POST', userId: ids.customer, body: requestBody, idempotencyKey: IDEMPOTENCY_KEY });
+    const own = state.vendorOrders.find((order) => same(order.vendor, ids.vendorOne));
+    const otherRead = await request(baseUrl, `/api/vendor/orders/${own._id}`, { userId: ids.vendorTwo });
+    const otherUpdate = await request(baseUrl, `/api/vendor/orders/${own._id}/status`, { method: 'PATCH', userId: ids.vendorTwo, body: { status: 'CONFIRMED' } });
+    assert.equal(otherRead.response.status, 404);
+    assert.equal(otherUpdate.response.status, 404);
+    assert.equal(own.status, 'PENDING');
+  });
+});
+
+test('vendor status workflow validates transitions, records actors, and aggregates parent status', async (context) => {
+  await withServer(context, async (baseUrl) => {
+    const placed = await request(baseUrl, '/api/orders', { method: 'POST', userId: ids.customer, body: requestBody, idempotencyKey: IDEMPOTENCY_KEY });
+    const [vendorOneOrder, vendorTwoOrder] = state.vendorOrders;
+    const firstConfirm = await request(baseUrl, `/api/vendor/orders/${vendorOneOrder._id}/status`, { method: 'PATCH', userId: ids.vendorOne, body: { status: 'CONFIRMED' } });
+    assert.equal(firstConfirm.response.status, 200);
+    assert.equal(state.parentOrders[0].status, 'PENDING');
+    const invalidJump = await request(baseUrl, `/api/vendor/orders/${vendorOneOrder._id}/status`, { method: 'PATCH', userId: ids.vendorOne, body: { status: 'SHIPPED' } });
+    assert.equal(invalidJump.response.status, 409);
+    const invalidField = await request(baseUrl, `/api/vendor/orders/${vendorOneOrder._id}/status`, { method: 'PATCH', userId: ids.vendorOne, body: { status: 'CONFIRMED', paymentStatus: 'PAID' } });
+    assert.equal(invalidField.response.status, 400);
+    await request(baseUrl, `/api/vendor/orders/${vendorTwoOrder._id}/status`, { method: 'PATCH', userId: ids.vendorTwo, body: { status: 'CONFIRMED' } });
+    assert.equal(state.parentOrders[0].status, 'CONFIRMED');
+    await request(baseUrl, `/api/vendor/orders/${vendorOneOrder._id}/status`, { method: 'PATCH', userId: ids.vendorOne, body: { status: 'PROCESSING' } });
+    await request(baseUrl, `/api/vendor/orders/${vendorTwoOrder._id}/status`, { method: 'PATCH', userId: ids.vendorTwo, body: { status: 'PROCESSING' } });
+    assert.equal(state.parentOrders[0].status, 'PROCESSING');
+    await request(baseUrl, `/api/vendor/orders/${vendorOneOrder._id}/status`, { method: 'PATCH', userId: ids.vendorOne, body: { status: 'SHIPPED' } });
+    await request(baseUrl, `/api/vendor/orders/${vendorTwoOrder._id}/status`, { method: 'PATCH', userId: ids.vendorTwo, body: { status: 'SHIPPED' } });
+    assert.equal(state.parentOrders[0].status, 'SHIPPED');
+    await request(baseUrl, `/api/vendor/orders/${vendorOneOrder._id}/status`, { method: 'PATCH', userId: ids.vendorOne, body: { status: 'DELIVERED' } });
+    await request(baseUrl, `/api/vendor/orders/${vendorTwoOrder._id}/status`, { method: 'PATCH', userId: ids.vendorTwo, body: { status: 'DELIVERED' } });
+    assert.equal(state.parentOrders[0].status, 'DELIVERED');
+    assert.ok(state.parentOrders[0].statusHistory.length >= 5);
+    assert.ok(vendorOneOrder.statusHistory.some((entry) => entry.status === 'CONFIRMED' && String(entry.actor) === ids.vendorOne.toString() && entry.actorRole === 'vendor'));
+    assert.equal(placed.body.data.order.commissionTotal, 25);
+    assert.equal(vendorOneOrder.commissionTotal, 20);
+    assert.equal(vendorOneOrder.vendorEarningsTotal, 180);
+  });
+});
+
+test('vendor dashboard statistics are scoped to vendor and include cancelled/delivered counts', async (context) => {
+  await withServer(context, async (baseUrl) => {
+    await request(baseUrl, '/api/orders', { method: 'POST', userId: ids.customer, body: requestBody, idempotencyKey: IDEMPOTENCY_KEY });
+    state.vendorOrders.find((order) => same(order.vendor, ids.vendorOne)).status = 'DELIVERED';
+    state.vendorOrders.find((order) => same(order.vendor, ids.vendorTwo)).status = 'CANCELLED';
+    const one = await request(baseUrl, '/api/vendor/orders/statistics', { userId: ids.vendorOne });
+    const two = await request(baseUrl, '/api/vendor/orders/statistics', { userId: ids.vendorTwo });
+    assert.deepEqual(one.body.data.statistics, { ALL: 1, PENDING: 0, CONFIRMED: 0, PROCESSING: 0, SHIPPED: 0, DELIVERED: 1, CANCELLED: 0 });
+    assert.deepEqual(two.body.data.statistics, { ALL: 1, PENDING: 0, CONFIRMED: 0, PROCESSING: 0, SHIPPED: 0, DELIVERED: 0, CANCELLED: 1 });
+  });
+});
+
+test('a vendor may cancel an unconfirmed order, and cancellation becomes terminal', async (context) => {
+  await withServer(context, async (baseUrl) => {
+    const oneItem = { ...requestBody, items: [{ productId: ids.productOne.toString(), quantity: 1 }] };
+    await request(baseUrl, '/api/orders', { method: 'POST', userId: ids.customer, body: oneItem, idempotencyKey: IDEMPOTENCY_KEY });
+    const vendorOrder = state.vendorOrders[0];
+    const cancelled = await request(baseUrl, `/api/vendor/orders/${vendorOrder._id}/status`, { method: 'PATCH', userId: ids.vendorOne, body: { status: 'CANCELLED' } });
+    assert.equal(cancelled.response.status, 200);
+    assert.equal(state.parentOrders[0].status, 'CANCELLED');
+    const terminal = await request(baseUrl, `/api/vendor/orders/${vendorOrder._id}/status`, { method: 'PATCH', userId: ids.vendorOne, body: { status: 'CONFIRMED' } });
+    assert.equal(terminal.response.status, 409);
   });
 });
