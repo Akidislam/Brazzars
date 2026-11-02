@@ -1,8 +1,8 @@
 # Brazzars
 
-Brazzars is a Bangladesh-focused, multi-vendor marketplace project. Its intended marketplace brings customers, independent vendors, and administrators into one web application. The current codebase includes a customer-facing landing page, an Express API with health and authentication endpoints, an opt-in MongoDB connection, and four initial Mongoose models.
+Brazzars is a Bangladesh-focused, multi-vendor marketplace project. Its intended marketplace brings customers, independent vendors, and administrators into one web application. The current codebase includes a customer-facing landing page, an Express API with health, authentication, and product endpoints, an opt-in MongoDB connection, and four Mongoose models.
 
-> **Project status:** Customer and vendor registration, login, JWT authentication, and the current-user endpoint are implemented. Marketplace transactions, vendor management tools, and admin workflows remain planned.
+> **Project status:** Customer and vendor registration, login, JWT authentication, current-user endpoint, vendor product APIs, product review APIs, and public product listing are implemented. Marketplace transactions and management dashboards remain planned.
 
 ## Table of contents
 
@@ -33,10 +33,10 @@ The planned business rules include a fixed 10% vendor commission, product review
 | Area | Implemented now | Planned |
 | --- | --- | --- |
 | Customer experience | Responsive landing page; customer registration and login UI; protected account placeholder; current-user API | Cart, checkout, and order tracking |
-| Vendor experience | Vendor registration UI creates a pending Shop; shared login; protected seller dashboard placeholder | Shop/product management and order fulfillment tools |
-| Admin experience | Protected admin dashboard placeholder; user role values include `admin`; reusable role authorization middleware | Vendor suspension and product review/moderation APIs; no public admin registration |
-| API | Health endpoints and authentication endpoints listed below | Marketplace, shop, product, cart, checkout, and order APIs |
-| Database | Mongoose connection support and User, Shop, Category, Product models | Cart, Order, VendorOrder, Payment, Review, Address, Commission, Payout, and Notification models |
+| Vendor experience | Vendor registration UI; shared login; protected seller dashboard placeholder; product management API | Shop management UI and order fulfillment tools |
+| Admin experience | Protected admin dashboard placeholder; pending product review API; user role values include `admin` | Vendor suspension, product moderation UI, and no public admin registration |
+| API | Health, authentication, vendor product management, admin product review, and public product listing APIs below | Cart, checkout, and order APIs |
+| Database | Mongoose connection support and User, Shop, Category, Product models, including product review and soft-delete fields | Cart, Order, VendorOrder, Payment, Review, Address, Commission, Payout, and Notification models |
 | Payments and delivery | No payment or delivery integration | Cash on Delivery, an online gateway selected later, and platform-managed or vendor-managed delivery |
 
 The role values and data models provide a foundation; they do not imply that corresponding screens, APIs, or permissions are already available.
@@ -127,7 +127,8 @@ server/
     │   └── env.js
     ├── controllers/
     │   ├── authController.js
-    │   └── healthController.js
+    │   ├── healthController.js
+    │   └── productController.js
     ├── middleware/
     │   ├── authenticate.js
     │   ├── authorizeRoles.js
@@ -139,17 +140,23 @@ server/
     │   └── User.js
     ├── routes/
     │   ├── authRoutes.js
-    │   └── healthRoutes.js
+    │   ├── adminProductRoutes.js
+    │   ├── healthRoutes.js
+    │   ├── publicProductRoutes.js
+    │   └── vendorProductRoutes.js
     ├── services/
     │   ├── authService.js
     │   ├── passwordService.js
+    │   ├── productService.js
     │   └── tokenService.js
     ├── test/
-    │   └── auth.test.js
+    │   ├── auth.test.js
+    │   └── product.test.js
     ├── utils/
     │   ├── httpError.js
     │   └── safeUser.js
-    └── validators/      (empty placeholder)
+    └── validators/
+        └── productValidator.js
 ```
 
 ## Database
@@ -163,9 +170,9 @@ The existing database configuration uses the Mongoose dependency and the `MONGOD
 | `User` | Name, normalized unique email, password hash, phone, role, active flag, timestamps | Email unique; role indexed. Password is excluded from normal queries and hashed by a pre-save hook using scrypt. |
 | `Shop` | Shop name, unique slug, description, logo, contact details, address, status, timestamps | `owner` references `User`; owner and status indexed; slug unique. |
 | `Category` | Name, unique slug, description, image, active flag, timestamps | Slug unique. |
-| `Product` | Name, slug, description, price, compare-at price, stock, images, status, timestamps | `vendor` references `User`, `shop` references `Shop`, and `category` references `Category`; shop/slug is unique together; vendor/status and category/status are indexed. Negative prices and stock are rejected; stock must be a whole number. |
+| `Product` | Name, shop-scoped slug, description, price, compare-at price, stock, image URLs, review status, active flag, soft-delete date, reviewer, review time, rejection reason, timestamps | `vendor` references `User`, `shop` references `Shop`, `category` references `Category`, and `reviewedBy` references `User`; shop/slug is unique together; vendor/status, category/status, and public visibility fields are indexed. Price must be greater than zero; stock must be a non-negative whole number. |
 
-The schemas declare references; they do not enforce that the referenced User has a vendor role, that a Product vendor owns its Shop, or that referenced records are active. No order, payment, or payout collection exists yet.
+Vendor product APIs assign the authenticated vendor and their Shop on the server and check active categories. Product removal is a soft delete using `isActive=false` and `deletedAt`; existing records are not permanently removed. The schemas declare references; they do not independently enforce that a referenced User has a vendor role or that a Product vendor owns its Shop. No order, payment, or payout collection exists yet.
 
 ### Planned models
 
@@ -177,11 +184,11 @@ The following describe confirmed product decisions, not working application flow
 
 ### Roles and permissions
 
-The User schema accepts `customer`, `vendor`, and `admin` role values. Registration only creates customers or vendors; there is no public admin registration endpoint. The authentication middleware verifies a signed bearer token, reloads the user, rejects missing or inactive users, and attaches a safe profile. Authorization middleware checks the role loaded from MongoDB rather than a client-supplied role. No vendor/admin business routes are protected yet because those routes do not exist. The planned experience assigns customers to shopping, vendors to shop/product/order management, and admins to marketplace moderation.
+The User schema accepts `customer`, `vendor`, and `admin` role values. Registration only creates customers or vendors; there is no public admin registration endpoint. The authentication middleware verifies a signed bearer token, reloads the user, rejects missing or inactive users, and attaches a safe profile. Authorization middleware checks the role loaded from MongoDB rather than a client-supplied role. Vendor product routes require `vendor`; product review routes require `admin`. Other vendor/admin management APIs and dashboard operations remain planned.
 
 ### Product approval
 
-The Product schema supports `pending`, `approved`, `rejected`, and `disabled` statuses, defaulting to `pending`. The planned workflow is for vendors to submit products and admins to approve or reject them before public listing; admins may later disable or remove listings. No approval API or public product listing exists yet.
+The Product schema supports `pending`, `approved`, `rejected`, and `disabled` statuses, defaulting to `pending`. Vendors create products in `pending`; only admins can approve or reject pending products. Approval records `reviewedBy` and `reviewedAt`; rejection may also store a reason. Significant vendor edits to name, description, price, compare-at price, category, or images return the product to `pending` and clear prior review data. Stock-only edits retain approval. Deleted products are soft-deleted and excluded from vendor management and public listing. The public API returns only approved, active, non-deleted products.
 
 ### Cart, checkout, and vendor orders
 
@@ -207,8 +214,59 @@ These API endpoints are currently implemented:
 | `POST` | `/api/auth/register/vendor` | Creates a vendor account and pending shop; uses a database transaction when available and cleanup fallback when transactions are unsupported. |
 | `POST` | `/api/auth/login` | Verifies email and password and returns a safe profile plus a JWT; invalid credentials use a generic response. |
 | `GET` | `/api/auth/me` | Requires a bearer JWT and returns the current user's safe profile. |
+| `POST` | `/api/vendor/products` | Vendor only; creates an owned product in pending review. |
+| `GET` | `/api/vendor/products` | Vendor only; lists only the current vendor's non-deleted products with pagination and filters. |
+| `GET` | `/api/vendor/products/:id` | Vendor only; returns an owned product or 404. |
+| `PATCH` | `/api/vendor/products/:id` | Vendor only; updates allowed product fields; significant changes reset review to pending. |
+| `DELETE` | `/api/vendor/products/:id` | Vendor only; soft-deletes an owned product. |
+| `GET` | `/api/admin/products/pending` | Admin only; lists active, non-deleted products awaiting review. |
+| `PATCH` | `/api/admin/products/:id/approve` | Admin only; approves a pending product and records reviewer/time. |
+| `PATCH` | `/api/admin/products/:id/reject` | Admin only; rejects a pending product with an optional reason. |
+| `GET` | `/api/products` | Public; lists only approved, active, non-deleted products. |
+| `GET` | `/api/products/:slug` | Public; returns one publicly visible product by slug or 404. |
 
-JWTs are signed with HS256 and expire after one hour. The current middleware supports CUSTOMER, VENDOR, and ADMIN role checks, but there are no role-restricted marketplace endpoints yet. Other paths return a JSON 404 response.
+JWTs are signed with HS256 and expire after one hour. Protected product routes reuse the database-backed `authenticate` and `authorizeRoles` middleware. Vendors can only access products whose stored owner matches their authenticated user ID; admins alone can review products. Other paths return a JSON 404 response.
+
+### Product API examples
+
+Create a vendor product with `POST /api/vendor/products` (Bearer token required):
+
+```json
+{
+  "name": "Handwoven jute tote",
+  "description": "A reusable tote made by local artisans.",
+  "price": 850,
+  "compareAtPrice": 1000,
+  "category": "64f000000000000000000001",
+  "stock": 12,
+  "imageUrl": "https://images.example.com/jute-tote.jpg"
+}
+```
+
+`category` must be an active Category ObjectId. `imageUrl` is optional; `images` may instead be supplied as an array of up to 10 HTTP/HTTPS URLs. The server assigns vendor, shop, slug, active state, and pending status. Client-supplied ownership, slug, status, review metadata, active state, and system fields are rejected.
+
+Successful create/detail/update responses use the existing response envelope:
+
+```json
+{
+  "success": true,
+  "data": {
+    "product": {
+      "id": "64f000000000000000000010",
+      "name": "Handwoven jute tote",
+      "slug": "handwoven-jute-tote",
+      "status": "pending",
+      "isActive": true,
+      "price": 850,
+      "stock": 12
+    }
+  }
+}
+```
+
+List endpoints return `data.products` and `data.pagination`, whose fields are `page`, `limit`, `total`, and `pages`. All list endpoints accept `page` (default `1`) and `limit` (default `20`, maximum `100`; page maximum `1000000`). Vendor listing also accepts `search`, `status` (`pending`, `approved`, `rejected`, `disabled`), and `isActive` (`true` or `false`). Public listing accepts `search`, `category` (active category slug or ObjectId), and `sort` (`newest`, `price_asc`, or `price_desc`). Search is limited to 100 characters and treated as literal text.
+
+Admin rejects may send `{ "reason": "Please provide clearer product photos." }`; an empty body or omitted reason is also allowed. Review endpoints only transition products currently pending and active. Repeated review attempts return a conflict response. Public responses include only safe Shop and Category details and do not include vendor account data.
 
 ### Authentication requests
 
@@ -294,7 +352,7 @@ From `server/`, run:
 npm test
 ```
 
-The Node.js built-in test suite uses in-memory model stubs and does not create customer/vendor accounts in MongoDB Atlas.
+The Node.js built-in test suite uses in-memory model stubs for auth and product API flows and does not create accounts, products, or collections in MongoDB Atlas. Product API coverage includes authorization, ownership, validation, approval, visibility, pagination, and search.
 
 ### Health checks
 
@@ -311,6 +369,7 @@ The database health endpoint returns HTTP 503 while Mongoose is disconnected; th
 - Never put Atlas credentials, passwords, access tokens, or private keys in README files, source code, screenshots, or commits.
 - The database connection error handling avoids logging the MongoDB URI.
 - The User model hashes passwords on document saves and excludes the password field from normal queries. Authentication verifies passwords using the existing scrypt format.
+- Product writes use explicit field allow-lists; vendor ownership and shop IDs come from the authenticated account, never the request body. Public queries require approved, active, and non-deleted products.
 - JWT signing uses the private `JWT_SECRET`; the secret is never included in tokens or API responses. Bearer tokens expire after one hour.
 - Login rejects invalid credentials with a generic message. Inactive accounts and invalid/missing tokens are rejected.
 - Do not expose admin controls or rely on client-side role checks as authorization. Apply `authenticate` and `authorizeRoles` to future protected server routes.
@@ -336,7 +395,7 @@ Before staging, review `git status` and confirm no environment files or credenti
 ## Roadmap and future improvements
 
 1. Build out customer, vendor, and admin experiences beyond the current protected placeholders.
-2. Add admin workflows for vendor approval/suspension and product moderation.
+2. Add vendor approval/suspension workflows and an admin interface for product moderation.
 3. Add product/category discovery, cart, checkout, parent orders, and per-vendor orders.
 4. Implement Cash on Delivery, select and integrate an online payment provider, and define payment state handling.
 5. Add platform/vendor delivery assignment and order status tracking.

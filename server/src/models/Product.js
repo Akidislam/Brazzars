@@ -45,7 +45,7 @@ const productSchema = new mongoose.Schema(
     price: {
       type: Number,
       required: [true, 'Product price is required.'],
-      min: [0, 'Price cannot be negative.'],
+      min: [Number.MIN_VALUE, 'Price must be greater than zero.'],
       validate: { validator: Number.isFinite, message: 'Price must be a finite number.' },
     },
     compareAtPrice: {
@@ -69,6 +69,11 @@ const productSchema = new mongoose.Schema(
       default: 'pending',
       index: true,
     },
+    isActive: { type: Boolean, default: true, index: true },
+    deletedAt: { type: Date, default: null, index: true },
+    reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    reviewedAt: { type: Date, default: null },
+    rejectionReason: { type: String, trim: true, maxlength: 500, default: null },
   },
   { timestamps: true },
 );
@@ -76,6 +81,7 @@ const productSchema = new mongoose.Schema(
 productSchema.index({ shop: 1, slug: 1 }, { unique: true });
 productSchema.index({ category: 1, status: 1 });
 productSchema.index({ vendor: 1, status: 1 });
+productSchema.index({ status: 1, isActive: 1, deletedAt: 1, createdAt: -1 });
 
 const Product = mongoose.models.Product || mongoose.model('Product', productSchema);
 
