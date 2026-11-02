@@ -27,6 +27,7 @@ function query(valueFactory) {
   const result = {
     populate() { return this; },
     select() { return this; },
+    lean() { return this; },
     sort(value) { options.sort = value; return this; },
     skip(value) { options.skip = value; return this; },
     limit(value) { options.limit = value; return this; },
@@ -40,6 +41,7 @@ function matches(record, filter) {
   return Object.entries(filter).every(([key, expected]) => {
     const actual = record[key];
     if (expected && typeof expected === 'object' && '$ne' in expected) return String(actual?._id ?? actual) !== String(expected.$ne);
+    if (expected && typeof expected === 'object' && '$in' in expected) return expected.$in.some((value) => String(actual?._id ?? actual) === String(value?._id ?? value));
     if (expected && typeof expected === 'object' && '$regex' in expected) {
       return new RegExp(expected.$regex, expected.$options).test(record[key] ?? '');
     }
@@ -88,6 +90,7 @@ function mockDatabase(context) {
 
   context.mock.method(User, 'findById', (id) => query(() => state.users.find((user) => String(user._id) === String(id)) ?? null));
   context.mock.method(Shop, 'findOne', (filter) => Promise.resolve(state.shops.find((shop) => matches(shop, filter)) ?? null));
+  context.mock.method(Shop, 'find', (filter) => query(() => state.shops.filter((shop) => matches(shop, filter))));
   context.mock.method(Category, 'findOne', (filter) => Promise.resolve(state.categories.find((category) => matches(category, filter)) ?? null));
   context.mock.method(Product, 'exists', (filter) => Promise.resolve(state.products.some((product) => matches(product, filter))));
   context.mock.method(Product, 'findOne', (filter) => query(() => state.products.find((product) => matches(product, filter)) ?? null));

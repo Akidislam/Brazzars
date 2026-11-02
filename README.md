@@ -1,8 +1,8 @@
 # Brazzars
 
-Brazzars is a Bangladesh-focused, multi-vendor marketplace project. Its intended marketplace brings customers, independent vendors, and administrators into one web application. The current codebase includes a customer-facing landing page, an Express API with health, authentication, and product endpoints, an opt-in MongoDB connection, and four Mongoose models.
+Brazzars is a Bangladesh-focused, multi-vendor marketplace project. Its intended marketplace brings customers, independent vendors, and administrators into one web application. The current codebase includes a customer-facing landing page, an Express API with health, authentication, product, category, and shop discovery endpoints, an opt-in MongoDB connection, and four Mongoose models.
 
-> **Project status:** Customer and vendor registration, login, JWT authentication, current-user endpoint, vendor product APIs, product review APIs, and public product listing are implemented. Marketplace transactions and management dashboards remain planned.
+> **Project status:** Customer and vendor registration, login, JWT authentication, current-user endpoint, vendor product APIs, product review APIs, and public marketplace discovery endpoints are implemented. Marketplace transactions and management dashboards remain planned.
 
 ## Table of contents
 
@@ -35,8 +35,8 @@ The planned business rules include a fixed 10% vendor commission, product review
 | Customer experience | Responsive landing page; customer registration and login UI; protected account placeholder; current-user API | Cart, checkout, and order tracking |
 | Vendor experience | Vendor registration UI; shared login; protected seller dashboard placeholder; product management API | Shop management UI and order fulfillment tools |
 | Admin experience | Protected admin dashboard placeholder; pending product review API; user role values include `admin` | Vendor suspension, product moderation UI, and no public admin registration |
-| API | Health, authentication, vendor product management, admin product review, and public product listing APIs below | Cart, checkout, and order APIs |
-| Database | Mongoose connection support and User, Shop, Category, Product models, including product review and soft-delete fields | Cart, Order, VendorOrder, Payment, Review, Address, Commission, Payout, and Notification models |
+| API | Health, authentication, vendor product management, admin product review, category/shop discovery, and public product search APIs below | Cart, checkout, and order APIs |
+| Database | Mongoose connection support and User, Shop, Category, Product models, including review, active, and soft-delete fields | Cart, Order, VendorOrder, Payment, Review, Address, Commission, Payout, and Notification models |
 | Payments and delivery | No payment or delivery integration | Cash on Delivery, an online gateway selected later, and platform-managed or vendor-managed delivery |
 
 The role values and data models provide a foundation; they do not imply that corresponding screens, APIs, or permissions are already available.
@@ -127,6 +127,7 @@ server/
     │   └── env.js
     ├── controllers/
     │   ├── authController.js
+    │   ├── discoveryController.js
     │   ├── healthController.js
     │   └── productController.js
     ├── middleware/
@@ -141,21 +142,26 @@ server/
     ├── routes/
     │   ├── authRoutes.js
     │   ├── adminProductRoutes.js
+    │   ├── categoryRoutes.js
     │   ├── healthRoutes.js
     │   ├── publicProductRoutes.js
+    │   ├── shopRoutes.js
     │   └── vendorProductRoutes.js
     ├── services/
     │   ├── authService.js
+    │   ├── discoveryService.js
     │   ├── passwordService.js
     │   ├── productService.js
     │   └── tokenService.js
     ├── test/
     │   ├── auth.test.js
+    │   ├── discovery.test.js
     │   └── product.test.js
     ├── utils/
     │   ├── httpError.js
     │   └── safeUser.js
     └── validators/
+        ├── discoveryValidator.js
         └── productValidator.js
 ```
 
@@ -168,11 +174,11 @@ The existing database configuration uses the Mongoose dependency and the `MONGOD
 | Model | Fields and behavior | References and indexes |
 | --- | --- | --- |
 | `User` | Name, normalized unique email, password hash, phone, role, active flag, timestamps | Email unique; role indexed. Password is excluded from normal queries and hashed by a pre-save hook using scrypt. |
-| `Shop` | Shop name, unique slug, description, logo, contact details, address, status, timestamps | `owner` references `User`; owner and status indexed; slug unique. |
-| `Category` | Name, unique slug, description, image, active flag, timestamps | Slug unique. |
+| `Shop` | Shop name, unique slug, description, logo, contact details, address, approval status, active flag, timestamps | `owner` references `User`; owner/status/active fields indexed; slug unique. Existing shops without `isActive` are treated as active when approved. |
+| `Category` | Name, unique slug, description, image, active flag, timestamps | Slug and active state indexed. |
 | `Product` | Name, shop-scoped slug, description, price, compare-at price, stock, image URLs, review status, active flag, soft-delete date, reviewer, review time, rejection reason, timestamps | `vendor` references `User`, `shop` references `Shop`, `category` references `Category`, and `reviewedBy` references `User`; shop/slug is unique together; vendor/status, category/status, and public visibility fields are indexed. Price must be greater than zero; stock must be a non-negative whole number. |
 
-Vendor product APIs assign the authenticated vendor and their Shop on the server and check active categories. Product removal is a soft delete using `isActive=false` and `deletedAt`; existing records are not permanently removed. The schemas declare references; they do not independently enforce that a referenced User has a vendor role or that a Product vendor owns its Shop. No order, payment, or payout collection exists yet.
+Vendor product APIs assign the authenticated vendor and their Shop on the server and check active categories. Product removal is a soft delete using `isActive=false` and `deletedAt`; existing records are not permanently removed. Public shop discovery requires `status=approved` and treats an absent `isActive` field on a legacy Shop as active. Public product APIs additionally require the referenced Shop to satisfy that same rule. Shop directory responses expose only city, district, and country from the address, never owner or shop contact details. The schemas declare references; they do not independently enforce that a referenced User has a vendor role or that a Product vendor owns its Shop. No order, payment, or payout collection exists yet.
 
 ### Planned models
 
@@ -188,7 +194,7 @@ The User schema accepts `customer`, `vendor`, and `admin` role values. Registrat
 
 ### Product approval
 
-The Product schema supports `pending`, `approved`, `rejected`, and `disabled` statuses, defaulting to `pending`. Vendors create products in `pending`; only admins can approve or reject pending products. Approval records `reviewedBy` and `reviewedAt`; rejection may also store a reason. Significant vendor edits to name, description, price, compare-at price, category, or images return the product to `pending` and clear prior review data. Stock-only edits retain approval. Deleted products are soft-deleted and excluded from vendor management and public listing. The public API returns only approved, active, non-deleted products.
+The Product schema supports `pending`, `approved`, `rejected`, and `disabled` statuses, defaulting to `pending`. Vendors create products in `pending`; only admins can approve or reject pending products. Approval records `reviewedBy` and `reviewedAt`; rejection may also store a reason. Significant vendor edits to name, description, price, compare-at price, category, or images return the product to `pending` and clear prior review data. Stock-only edits retain approval. Deleted products are soft-deleted and excluded from vendor management and public listing. Public discovery returns only approved, active, non-deleted products from approved, active shops. Missing active/delete fields on legacy documents are treated as active/not deleted unless explicitly marked otherwise.
 
 ### Cart, checkout, and vendor orders
 
@@ -224,8 +230,14 @@ These API endpoints are currently implemented:
 | `PATCH` | `/api/admin/products/:id/reject` | Admin only; rejects a pending product with an optional reason. |
 | `GET` | `/api/products` | Public; lists only approved, active, non-deleted products. |
 | `GET` | `/api/products/:slug` | Public; returns one publicly visible product by slug or 404. |
+| `GET` | `/api/categories` | Public; lists active categories with pagination and name search. |
+| `GET` | `/api/categories/:slug` | Public; returns one active category or 404. |
+| `GET` | `/api/categories/:slug/products` | Public; lists public products in an active category. |
+| `GET` | `/api/shops` | Public; lists approved and active shops with pagination and name search. |
+| `GET` | `/api/shops/:slug` | Public; returns one approved and active shop or 404. |
+| `GET` | `/api/shops/:slug/products` | Public; lists public products from an approved and active shop. |
 
-JWTs are signed with HS256 and expire after one hour. Protected product routes reuse the database-backed `authenticate` and `authorizeRoles` middleware. Vendors can only access products whose stored owner matches their authenticated user ID; admins alone can review products. Other paths return a JSON 404 response.
+JWTs are signed with HS256 and expire after one hour. Protected product routes reuse the database-backed `authenticate` and `authorizeRoles` middleware. Vendors can only access products whose stored owner matches their authenticated user ID; admins alone can review products. Discovery routes are public and return only selected public fields. Other paths return a JSON 404 response.
 
 ### Product API examples
 
@@ -264,7 +276,31 @@ Successful create/detail/update responses use the existing response envelope:
 }
 ```
 
-List endpoints return `data.products` and `data.pagination`, whose fields are `page`, `limit`, `total`, and `pages`. All list endpoints accept `page` (default `1`) and `limit` (default `20`, maximum `100`; page maximum `1000000`). Vendor listing also accepts `search`, `status` (`pending`, `approved`, `rejected`, `disabled`), and `isActive` (`true` or `false`). Public listing accepts `search`, `category` (active category slug or ObjectId), and `sort` (`newest`, `price_asc`, or `price_desc`). Search is limited to 100 characters and treated as literal text.
+List endpoints return the relevant array (`data.products`, `data.categories`, or `data.shops`) plus `data.pagination`, whose fields are `page`, `limit`, `total`, and `pages`. Directory endpoints accept `page` (default `1`), `limit` (default `20`, maximum `100`), and `search` where applicable. Global product listing accepts `search`, `category` (active slug or ObjectId), `shop` (approved active slug or ObjectId), `minPrice`, `maxPrice`, `sort`, `page`, and `limit`. Category products accept search, price sorting, optional min/max price, and pagination; shop products also accept category filtering. Supported public product sorts are `newest`, `price_asc`, `price_desc`, and `name_asc`. Price ranges must be non-negative with `minPrice <= maxPrice`. Search is limited to 100 characters and treated as literal text; unsupported query keys and sorts are rejected.
+
+Example requests:
+
+```text
+GET /api/categories?search=home&page=1&limit=12
+GET /api/categories/home-living/products?search=lamp&sort=price_asc&page=1&limit=20
+GET /api/shops?search=craft&page=1&limit=12
+GET /api/shops/example-crafts/products?category=home-living&sort=newest
+GET /api/products?search=linen&category=home-living&shop=example-crafts&minPrice=500&maxPrice=3000&sort=price_asc&page=1&limit=24
+```
+
+Category response example:
+
+```json
+{
+  "success": true,
+  "data": {
+    "categories": [{ "id": "64f000000000000000000001", "name": "Home & Living", "slug": "home-living", "description": "Home goods", "image": "https://images.example.com/home.jpg" }],
+    "pagination": { "page": 1, "limit": 20, "total": 1, "pages": 1 }
+  }
+}
+```
+
+Shop list responses use the same pagination envelope with `shops`; shop objects contain only public shop name, slug, logo, description, and city/district/country location. Public product list responses retain the existing `products` and `pagination` envelope. Product visibility consistently excludes pending/rejected/disabled, inactive, and soft-deleted products and products attached to pending, suspended, or inactive shops.
 
 Admin rejects may send `{ "reason": "Please provide clearer product photos." }`; an empty body or omitted reason is also allowed. Review endpoints only transition products currently pending and active. Repeated review attempts return a conflict response. Public responses include only safe Shop and Category details and do not include vendor account data.
 
@@ -352,7 +388,7 @@ From `server/`, run:
 npm test
 ```
 
-The Node.js built-in test suite uses in-memory model stubs for auth and product API flows and does not create accounts, products, or collections in MongoDB Atlas. Product API coverage includes authorization, ownership, validation, approval, visibility, pagination, and search.
+The Node.js built-in test suite uses in-memory model stubs for auth, product, and discovery API flows and does not create accounts, products, or collections in MongoDB Atlas. Coverage includes role authorization, ownership, product approval/visibility, category and shop directories, global filters/sorts, legacy document visibility, pagination, and search.
 
 ### Health checks
 
@@ -370,6 +406,7 @@ The database health endpoint returns HTTP 503 while Mongoose is disconnected; th
 - The database connection error handling avoids logging the MongoDB URI.
 - The User model hashes passwords on document saves and excludes the password field from normal queries. Authentication verifies passwords using the existing scrypt format.
 - Product writes use explicit field allow-lists; vendor ownership and shop IDs come from the authenticated account, never the request body. Public queries require approved, active, and non-deleted products.
+- Discovery responses select public fields only. Shop owner IDs, account email/phone, and private street address fields are not returned by the public shop APIs.
 - JWT signing uses the private `JWT_SECRET`; the secret is never included in tokens or API responses. Bearer tokens expire after one hour.
 - Login rejects invalid credentials with a generic message. Inactive accounts and invalid/missing tokens are rejected.
 - Do not expose admin controls or rely on client-side role checks as authorization. Apply `authenticate` and `authorizeRoles` to future protected server routes.
@@ -396,7 +433,7 @@ Before staging, review `git status` and confirm no environment files or credenti
 
 1. Build out customer, vendor, and admin experiences beyond the current protected placeholders.
 2. Add vendor approval/suspension workflows and an admin interface for product moderation.
-3. Add product/category discovery, cart, checkout, parent orders, and per-vendor orders.
+3. Add cart, checkout, parent orders, and per-vendor orders.
 4. Implement Cash on Delivery, select and integrate an online payment provider, and define payment state handling.
 5. Add platform/vendor delivery assignment and order status tracking.
 6. Add commission records and manual payout review.

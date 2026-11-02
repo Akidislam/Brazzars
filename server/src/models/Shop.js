@@ -53,6 +53,7 @@ const shopSchema = new mongoose.Schema(
       default: 'pending',
       index: true,
     },
+    isActive: { type: Boolean, default: true, index: true },
   },
   { timestamps: true },
 );

@@ -12,9 +12,11 @@ import {
   validateObjectId,
   validateProductUpdate,
 } from '../validators/productValidator.js';
+import { parseGlobalProductQuery } from '../validators/discoveryValidator.js';
 
 const CATEGORY_FIELDS = 'name slug image';
 const SHOP_FIELDS = 'shopName slug logo status';
+const PUBLIC_PRODUCT_FIELDS = '_id shop category name slug description price compareAtPrice stock images createdAt updatedAt';
 
 function slugBase(name) {
   const base = name.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
@@ -85,6 +87,11 @@ function vendorListView(product) {
 
 function paginationView(page, limit, total) {
   return { page, limit, total, pages: Math.ceil(total / limit) };
+}
+
+async function getPublicShopIds() {
+  const shops = await Shop.find({ status: 'approved', isActive: { $ne: false } }).select('_id').lean();
+  return shops.map((shop) => shop._id);
 }
 
 async function requireVendorShop(vendorId) {
@@ -246,35 +253,47 @@ function publicSort(sort) {
     newest: { createdAt: -1, _id: -1 },
     price_asc: { price: 1, _id: 1 },
     price_desc: { price: -1, _id: -1 },
+    name_asc: { name: 1, _id: 1 },
   };
   if (sort === undefined) return sorts.newest;
-  if (!sorts[sort]) throw new HttpError(400, 'Sort must be newest, price_asc, or price_desc.');
+  if (!sorts[sort]) throw new HttpError(400, 'Sort must be newest, price_asc, price_desc, or name_asc.');
   return sorts[sort];
 }
 
 export async function listPublicProducts(query) {
-  const { page, limit } = parsePagination(query);
-  const search = escapeSearch(query.search);
-  const sort = publicSort(query.sort);
+  const { page, limit, search, sort: requestedSort, category: categoryValue, shop: shopValue, minPrice, maxPrice } = parseGlobalProductQuery(query);
+  const sort = publicSort(requestedSort);
   // Older Product documents predate isActive/deletedAt. Treat the missing active marker as true;
   // `deletedAt: null` also matches documents without that field in MongoDB.
   const filter = { status: 'approved', isActive: { $ne: false }, deletedAt: null };
   if (search) filter.name = { $regex: search, $options: 'i' };
-  if (query.category !== undefined) {
-    if (isObjectIdString(query.category)) filter.category = query.category;
-    else {
-      if (typeof query.category !== 'string' || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(query.category)) {
-        throw new HttpError(400, 'Category filter is invalid.');
-      }
-      const category = await Category.findOne({ slug: query.category, isActive: true }).select('_id');
-      if (!category) return { products: [], pagination: paginationView(page, limit, 0) };
-      filter.category = category._id;
-    }
+  if (minPrice !== undefined || maxPrice !== undefined) {
+    filter.price = {
+      ...(minPrice !== undefined ? { $gte: minPrice } : {}),
+      ...(maxPrice !== undefined ? { $lte: maxPrice } : {}),
+    };
+  }
+  if (categoryValue !== undefined) {
+    const categoryKey = isObjectIdString(categoryValue) ? { _id: categoryValue } : { slug: categoryValue };
+    const category = await Category.findOne({ ...categoryKey, isActive: true }).select('_id').lean();
+    if (!category) return { products: [], pagination: paginationView(page, limit, 0) };
+    filter.category = category._id;
+  }
+  if (shopValue !== undefined) {
+    const shopKey = isObjectIdString(shopValue) ? { _id: shopValue } : { slug: shopValue };
+    const shop = await Shop.findOne({ ...shopKey, status: 'approved', isActive: { $ne: false } }).select('_id').lean();
+    if (!shop) return { products: [], pagination: paginationView(page, limit, 0) };
+    filter.shop = shop._id;
+  } else {
+    const publicShopIds = await getPublicShopIds();
+    if (publicShopIds.length === 0) return { products: [], pagination: paginationView(page, limit, 0) };
+    filter.shop = { $in: publicShopIds };
   }
   const skip = (page - 1) * limit;
   const [products, total] = await Promise.all([
-    Product.find(filter).populate('shop', 'shopName slug logo').populate('category', CATEGORY_FIELDS)
-      .sort(sort).skip(skip).limit(limit),
+    Product.find(filter).select(PUBLIC_PRODUCT_FIELDS)
+      .populate('shop', 'shopName slug logo').populate('category', CATEGORY_FIELDS)
+      .sort(sort).skip(skip).limit(limit).lean(),
     Product.countDocuments(filter),
   ]);
   return { products: products.map((product) => {
@@ -290,8 +309,11 @@ export async function listPublicProducts(query) {
 
 export async function getPublicProductBySlug(slug) {
   if (typeof slug !== 'string' || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) throw new HttpError(404, 'Product not found.');
-  const product = await Product.findOne({ slug, status: 'approved', isActive: { $ne: false }, deletedAt: null })
-    .populate('shop', 'shopName slug logo').populate('category', CATEGORY_FIELDS);
+  const publicShopIds = await getPublicShopIds();
+  if (publicShopIds.length === 0) throw new HttpError(404, 'Product not found.');
+  const product = await Product.findOne({
+    slug, status: 'approved', isActive: { $ne: false }, deletedAt: null, shop: { $in: publicShopIds },
+  }).select(PUBLIC_PRODUCT_FIELDS).populate('shop', 'shopName slug logo').populate('category', CATEGORY_FIELDS).lean();
   if (!product) throw new HttpError(404, 'Product not found.');
   const view = productView(product);
   delete view.vendor;
