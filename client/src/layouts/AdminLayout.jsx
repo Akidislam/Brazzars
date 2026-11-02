@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { Activity, ArrowUpRight, Boxes, CreditCard, LayoutDashboard, LogOut, Menu, PackageCheck, Settings, ShieldCheck, Store, Users, X } from 'lucide-react';
+import { ArrowUpRight, Boxes, CreditCard, LayoutDashboard, LogOut, Menu, PackageCheck, Settings, ShieldCheck, Store, Tags, Users, X } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 
 const navigation = [
@@ -9,7 +9,7 @@ const navigation = [
   { label: 'Product Approval', icon: Boxes },
   { label: 'Vendor Management', icon: Store },
   { label: 'Customer Management', icon: Users },
-  { label: 'Categories', icon: Activity },
+  { label: 'Categories', to: '/admin/categories', icon: Tags, ready: true },
   { label: 'Vendor Payouts', icon: CreditCard },
   { label: 'Settings', icon: Settings },
 ];

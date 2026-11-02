@@ -11,6 +11,7 @@ import shopRoutes from './routes/shopRoutes.js';
 import orderRoutes from './routes/orderRoutes.js';
 import vendorOrderRoutes from './routes/vendorOrderRoutes.js';
 import adminOrderRoutes from './routes/adminOrderRoutes.js';
+import adminCategoryRoutes from './routes/adminCategoryRoutes.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 
 const app = express();
@@ -27,6 +28,7 @@ app.use('/api/shops', shopRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/vendor/orders', vendorOrderRoutes);
 app.use('/api/admin/orders', adminOrderRoutes);
+app.use('/api/admin/categories', adminCategoryRoutes);
 app.use(notFoundHandler);
 app.use(errorHandler);
 

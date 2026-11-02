@@ -16,6 +16,7 @@ import AdminOrdersPage from './pages/AdminOrdersPage.jsx';
 import AdminLoginPage from './pages/AdminLoginPage.jsx';
 import AdminChangePasswordPage from './pages/AdminChangePasswordPage.jsx';
 import AdminDashboardPage from './pages/AdminDashboardPage.jsx';
+import AdminCategoriesPage from './pages/AdminCategoriesPage.jsx';
 import ProtectedRoute, { GuestOnlyRoute } from './routes/ProtectedRoute.jsx';
 
 export default function App() {
@@ -56,6 +57,7 @@ export default function App() {
         <Route path="/admin/dashboard" element={<AdminDashboardPage />} />
         <Route path="/admin/orders" element={<AdminOrdersPage />} />
         <Route path="/admin/orders/:id" element={<AdminOrdersPage mode="detail" />} />
+        <Route path="/admin/categories" element={<AdminCategoriesPage />} />
       </Route>
       <Route path="*" element={<HomePage />} />
     </Routes>

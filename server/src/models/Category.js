@@ -8,6 +8,14 @@ const categorySchema = new mongoose.Schema(
       trim: true,
       maxlength: 120,
     },
+    normalizedName: {
+      type: String,
+      trim: true,
+      lowercase: true,
+      select: false,
+      unique: true,
+      sparse: true,
+    },
     slug: {
       type: String,
       required: [true, 'Category slug is required.'],
