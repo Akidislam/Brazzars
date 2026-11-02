@@ -3,12 +3,22 @@ import HomePage from './pages/HomePage.jsx';
 import LoginPage from './pages/LoginPage.jsx';
 import RegisterPage from './pages/RegisterPage.jsx';
 import DashboardPage from './pages/DashboardPage.jsx';
+import CategoryPage from './pages/CategoryPage.jsx';
+import ShopsPage from './pages/ShopsPage.jsx';
+import ShopPage from './pages/ShopPage.jsx';
+import SearchPage from './pages/SearchPage.jsx';
+import ProductPage from './pages/ProductPage.jsx';
 import ProtectedRoute, { GuestOnlyRoute } from './routes/ProtectedRoute.jsx';
 
 export default function App() {
   return (
     <Routes>
       <Route path="/" element={<HomePage />} />
+      <Route path="/categories/:slug" element={<CategoryPage />} />
+      <Route path="/shops" element={<ShopsPage />} />
+      <Route path="/shops/:slug" element={<ShopPage />} />
+      <Route path="/search" element={<SearchPage />} />
+      <Route path="/products/:slug" element={<ProductPage />} />
       <Route element={<GuestOnlyRoute />}>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/vendor/login" element={<LoginPage accountType="vendor" />} />
